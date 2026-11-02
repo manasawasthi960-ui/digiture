@@ -16,9 +16,12 @@ struct AntivirusStatus {
 }
 
 #[derive(Serialize)]
-struct AntivirusProduct {
-    displayName: Option<String>,
-    productState: Option<i32>,
+struct RealTimeProtectionStatus {
+    success: bool,
+    antivirus_enabled: Option<bool>,
+    real_time_protection_enabled: Option<bool>,
+    service_enabled: Option<bool>,
+    details: String,
 }
 
 #[tauri::command]
@@ -35,7 +38,9 @@ fn check_firewall_status() -> FirewallStatus {
     match output {
         Ok(result) if result.status.success() => FirewallStatus {
             success: true,
-            profiles: String::from_utf8_lossy(&result.stdout).to_string(),
+            profiles: String::from_utf8_lossy(&result.stdout)
+                .trim()
+                .to_string(),
             details: "Windows Firewall profile status was retrieved.".to_string(),
         },
         Ok(result) => FirewallStatus {
@@ -44,7 +49,7 @@ fn check_firewall_status() -> FirewallStatus {
             details: format!(
                 "Could not retrieve firewall status. Exit code: {:?}. {}",
                 result.status.code(),
-                String::from_utf8_lossy(&result.stderr)
+                String::from_utf8_lossy(&result.stderr).trim()
             ),
         },
         Err(error) => FirewallStatus {
@@ -68,7 +73,9 @@ fn check_antivirus_status() -> AntivirusStatus {
 
     match output {
         Ok(result) if result.status.success() => {
-            let products = String::from_utf8_lossy(&result.stdout).trim().to_string();
+            let products = String::from_utf8_lossy(&result.stdout)
+                .trim()
+                .to_string();
 
             if products.is_empty() || products == "null" {
                 AntivirusStatus {
@@ -90,13 +97,98 @@ fn check_antivirus_status() -> AntivirusStatus {
             details: format!(
                 "Could not retrieve antivirus status. Exit code: {:?}. {}",
                 result.status.code(),
-                String::from_utf8_lossy(&result.stderr)
+                String::from_utf8_lossy(&result.stderr).trim()
             ),
         },
         Err(error) => AntivirusStatus {
             success: false,
             products: String::new(),
             details: format!("Could not run the antivirus check: {error}"),
+        },
+    }
+}
+
+#[tauri::command]
+fn check_real_time_protection() -> RealTimeProtectionStatus {
+    let script = r#"
+        $ErrorActionPreference = 'Stop'
+        $status = Get-MpComputerStatus -ErrorAction Stop
+
+        [PSCustomObject]@{
+            AntivirusEnabled = $status.AMServiceEnabled
+            RealTimeProtectionEnabled = $status.RealTimeProtectionEnabled
+            ServiceEnabled = $status.AMServiceEnabled
+        } | ConvertTo-Json -Compress
+    "#;
+
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            let json = String::from_utf8_lossy(&result.stdout)
+                .trim()
+                .to_string();
+
+            match serde_json::from_str::<serde_json::Value>(&json) {
+                Ok(data) => {
+                    let antivirus_enabled = data["AntivirusEnabled"].as_bool();
+                    let real_time_protection_enabled =
+                        data["RealTimeProtectionEnabled"].as_bool();
+                    let service_enabled = data["ServiceEnabled"].as_bool();
+
+                    if antivirus_enabled.is_none()
+                        || real_time_protection_enabled.is_none()
+                        || service_enabled.is_none()
+                    {
+                        RealTimeProtectionStatus {
+                            success: false,
+                            antivirus_enabled,
+                            real_time_protection_enabled,
+                            service_enabled,
+                            details: "Windows did not return all expected Defender status values.".to_string(),
+                        }
+                    } else {
+                        RealTimeProtectionStatus {
+                            success: true,
+                            antivirus_enabled,
+                            real_time_protection_enabled,
+                            service_enabled,
+                            details: "Windows Defender protection status was retrieved. This check does not assess third-party antivirus products.".to_string(),
+                        }
+                    }
+                }
+                Err(error) => RealTimeProtectionStatus {
+                    success: false,
+                    antivirus_enabled: None,
+                    real_time_protection_enabled: None,
+                    service_enabled: None,
+                    details: format!("Could not parse protection status: {error}"),
+                },
+            }
+        }
+        Ok(result) => RealTimeProtectionStatus {
+            success: false,
+            antivirus_enabled: None,
+            real_time_protection_enabled: None,
+            service_enabled: None,
+            details: format!(
+                "Could not retrieve Windows Defender protection status. {}",
+                String::from_utf8_lossy(&result.stderr).trim()
+            ),
+        },
+        Err(error) => RealTimeProtectionStatus {
+            success: false,
+            antivirus_enabled: None,
+            real_time_protection_enabled: None,
+            service_enabled: None,
+            details: format!("Could not run the protection check: {error}"),
         },
     }
 }
@@ -113,7 +205,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             check_firewall_status,
-            check_antivirus_status
+            check_antivirus_status,
+            check_real_time_protection
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -24,6 +24,14 @@ type FirewallStatus = {
   details: string;
 };
 
+type RealTimeProtectionStatus = {
+  success: boolean;
+  antivirus_enabled: boolean | null;
+  real_time_protection_enabled: boolean | null;
+  service_enabled: boolean | null;
+  details: string;
+};
+
 function App() {
   const [checking, setChecking] = useState(false);
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
@@ -32,6 +40,9 @@ function App() {
   const [checkingAntivirus, setCheckingAntivirus] = useState(false);
   const [antivirus, setAntivirus] = useState<AntivirusStatus | null>(null);
   const [antivirusError, setAntivirusError] = useState("");
+  const [checkingProtection, setCheckingProtection] = useState(false);
+  const [protection, setProtection] = useState<RealTimeProtectionStatus | null>(null);
+  const [protectionError, setProtectionError] = useState("");
 
   async function checkFirewall() {
     if (checking) return;
@@ -77,6 +88,32 @@ function App() {
       setCheckingAntivirus(false);
     }
   }
+
+  async function checkRealTimeProtection() {
+  if (checkingProtection) return;
+
+  setCheckingProtection(true);
+  setProtectionError("");
+
+  try {
+    const result = await invoke<RealTimeProtectionStatus>(
+      "check_real_time_protection"
+    );
+
+    setProtection(result);
+
+    if (!result.success) {
+      setProtectionError(
+        result.details || "Real-time protection check failed."
+      );
+    }
+  } catch (err) {
+    setProtection(null);
+    setProtectionError(String(err));
+  } finally {
+    setCheckingProtection(false);
+  }
+}
 
   function getAntivirusProducts(): AntivirusProduct[] {
     if (!antivirus?.success || !antivirus.products) {
@@ -288,6 +325,21 @@ function App() {
                 ? "Checking antivirus..."
                 : "Check antivirus"}
             </button>
+
+            <button
+              className="primary-button"
+              type="button"
+              onClick={checkRealTimeProtection}
+              disabled={checkingProtection}
+            >
+              {checkingProtection
+                 ? "Checking protection..."
+                 : "Check real-time protection"}
+            </button>
+
+
+
+
           </div>
         </section>
 
@@ -301,7 +353,8 @@ function App() {
 
             <div className="stat-number">
               {(firewall?.success ? 1 : 0) +
-                (antivirus?.success ? 1 : 0)}
+                (antivirus?.success ? 1 : 0) +
+                (protection?.success ? 1 : 0)}
             </div>
 
             <div className="stat-caption">
@@ -373,7 +426,8 @@ function App() {
 
             <span className="check-count">
               {(firewall?.success ? 1 : 0) +
-                (antivirus?.success ? 1 : 0)}{" "}
+                (antivirus?.success ? 1 : 0) +
+                (protection?.success ? 1 : 0)}{" "}
               CHECK(S)
             </span>
           </div>
@@ -514,6 +568,90 @@ function App() {
               <p>{antivirus.details}</p>
             </div>
           )}
+          
+          {/* REAL-TIME PROTECTION STATUS */}
+
+<article className="check-row">
+  <div className="check-symbol">🛡</div>
+
+  <div className="check-info">
+    <strong>Windows Defender Real-Time Protection</strong>
+
+```
+<p>
+  Checks whether Microsoft Defender reports that real-time threat
+  monitoring is enabled.
+</p>
+```
+
+  </div>
+
+  <span className="check-status">
+    <span className="small-dot" />
+
+```
+{checkingProtection
+  ? "Checking"
+  : protection?.success
+    ? protection.real_time_protection_enabled === true
+      ? "Enabled"
+      : protection.real_time_protection_enabled === false
+        ? "Disabled"
+        : "Unknown"
+    : protectionError
+      ? "Failed"
+      : "Not checked"}
+```
+
+  </span>
+</article>
+
+{protection?.success && (
+
+  <div className="firewall-results">
+    <h4>Real-time protection details</h4>
+
+```
+<article className="check-row">
+  <div className="check-info">
+    <strong>Antivirus engine</strong>
+    <p>
+      Whether Windows reports the Defender antivirus service as enabled.
+    </p>
+  </div>
+
+  <span className="check-status">
+    {protection.antivirus_enabled === true
+      ? "Enabled"
+      : protection.antivirus_enabled === false
+        ? "Disabled"
+        : "Unknown"}
+  </span>
+</article>
+
+<article className="check-row">
+  <div className="check-info">
+    <strong>Real-time monitoring</strong>
+    <p>
+      Whether Windows reports Defender real-time protection as enabled.
+    </p>
+  </div>
+
+  <span className="check-status">
+    {protection.real_time_protection_enabled === true
+      ? "Enabled"
+      : protection.real_time_protection_enabled === false
+        ? "Disabled"
+        : "Unknown"}
+  </span>
+</article>
+
+<p>{protection.details}</p>
+```
+
+  </div>
+)}
+
 
           {/* ERROR MESSAGES */}
           {error && (
@@ -537,6 +675,17 @@ function App() {
               </div>
             </div>
           )}
+
+          {protectionError && (
+  <div className="notice error-notice" role="alert">
+    <span className="notice-icon">!</span>
+
+    <div>
+      <strong>Real-time protection check failed</strong>
+      <p>{protectionError}</p>
+    </div>
+  </div>
+)}
 
           {/* FOOTER MESSAGE */}
           {(firewall?.success || antivirus?.success) && (

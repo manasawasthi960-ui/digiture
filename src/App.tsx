@@ -40,14 +40,15 @@ function App() {
   const [checkingAntivirus, setCheckingAntivirus] = useState(false);
   const [antivirus, setAntivirus] = useState<AntivirusStatus | null>(null);
   const [antivirusError, setAntivirusError] = useState("");
+
   const [checkingProtection, setCheckingProtection] = useState(false);
   const [protection, setProtection] = useState<RealTimeProtectionStatus | null>(null);
   const [protectionError, setProtectionError] = useState("");
+
   const [checkingAll, setCheckingAll] = useState(false);
 
   async function checkFirewall() {
     if (checking) return;
-
     setChecking(true);
     setError("");
 
@@ -68,15 +69,11 @@ function App() {
 
   async function checkAntivirus() {
     if (checkingAntivirus) return;
-
     setCheckingAntivirus(true);
     setAntivirusError("");
 
     try {
-      const result = await invoke<AntivirusStatus>(
-        "check_antivirus_status"
-      );
-
+      const result = await invoke<AntivirusStatus>("check_antivirus_status");
       setAntivirus(result);
 
       if (!result.success) {
@@ -91,34 +88,27 @@ function App() {
   }
 
   async function checkRealTimeProtection() {
-  if (checkingProtection) return;
+    if (checkingProtection) return;
+    setCheckingProtection(true);
+    setProtectionError("");
 
-  setCheckingProtection(true);
-  setProtectionError("");
+    try {
+      const result = await invoke<RealTimeProtectionStatus>("check_real_time_protection");
+      setProtection(result);
 
-  try {
-    const result = await invoke<RealTimeProtectionStatus>(
-      "check_real_time_protection"
-    );
-
-    setProtection(result);
-
-    if (!result.success) {
-      setProtectionError(
-        result.details || "Real-time protection check failed."
-      );
+      if (!result.success) {
+        setProtectionError(result.details || "Real-time protection check failed.");
+      }
+    } catch (err) {
+      setProtection(null);
+      setProtectionError(String(err));
+    } finally {
+      setCheckingProtection(false);
     }
-  } catch (err) {
-    setProtection(null);
-    setProtectionError(String(err));
-  } finally {
-    setCheckingProtection(false);
   }
-}
 
   async function refreshAllChecks() {
     if (checkingAll) return;
-
     setCheckingAll(true);
     try {
       await Promise.all([
@@ -138,15 +128,12 @@ function App() {
 
     try {
       const parsed: unknown = JSON.parse(antivirus.products);
-
       if (Array.isArray(parsed)) {
         return parsed as AntivirusProduct[];
       }
-
       if (parsed && typeof parsed === "object") {
         return [parsed as AntivirusProduct];
       }
-
       return [];
     } catch {
       return [];
@@ -160,7 +147,6 @@ function App() {
 
     try {
       const parsed: unknown = JSON.parse(firewall.profiles);
-
       return Array.isArray(parsed)
         ? (parsed as FirewallProfile[])
         : [parsed as FirewallProfile];
@@ -200,34 +186,45 @@ function App() {
     if (!firewall?.success) {
       return "Not checked";
     }
-
     if (profiles.length === 0) {
       return "No profiles returned";
     }
-
     return disabledCount > 0
       ? `${disabledCount} profile(s) disabled`
       : "All returned profiles enabled";
   }
+
+  const isAnyChecking = checkingAll || checking || checkingAntivirus || checkingProtection;
 
   return (
     <div className="app-shell">
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-icon">D</div>
+          <div className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
+          </div>
 
-          <div>
-            <h1>Digiture</h1>
-            <span>Digital Security</span>
+          <div className="brand-text">
+            <span className="brand-name">Digiture</span>
+            <span className="brand-badge">Digital Security</span>
           </div>
         </div>
 
-        <p className="nav-label">WORKSPACE</p>
+        <p className="nav-label">Workspace</p>
 
         <nav className="navigation">
           <button className="nav-item active" type="button">
-            ▦ <span>Overview</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+            <span>Overview</span>
           </button>
 
           <button
@@ -236,7 +233,11 @@ function App() {
             onClick={checkAntivirus}
             disabled={checkingAntivirus}
           >
-            ⌕ <span>Security Scan</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span>Security Scan</span>
           </button>
 
           <button
@@ -248,7 +249,12 @@ function App() {
                 ?.scrollIntoView({ behavior: "smooth" })
             }
           >
-            ◇ <span>Findings</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span>Findings</span>
           </button>
 
           <button
@@ -260,7 +266,11 @@ function App() {
                 ?.scrollIntoView({ behavior: "smooth" })
             }
           >
-            ✓ <span>Verification</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <polyline points="9 12 11 14 15 10" />
+            </svg>
+            <span>Verification</span>
           </button>
 
           <button
@@ -272,17 +282,30 @@ function App() {
                 ?.scrollIntoView({ behavior: "smooth" })
             }
           >
-            ◷ <span>Activity History</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+            <span>Activity History</span>
           </button>
         </nav>
 
-        <div className="sidebar-bottom">
+        <div className="sidebar-footer">
           <div className="privacy-card">
-            <strong>Your device, your control.</strong>
-            <p>Review findings before taking action. No automatic fixes.</p>
+            <div className="privacy-card-header">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              <span>Read-only inspection</span>
+            </div>
+            <p>Monitors system state without altering any configuration.</p>
           </div>
 
-          <div className="version">DIGITURE PREVIEW · 0.1.0</div>
+          <div className="sidebar-meta">
+            <span>v0.1.0</span>
+            <span>Desktop Safe</span>
+          </div>
         </div>
       </aside>
 
@@ -290,42 +313,70 @@ function App() {
       <main className="main-content">
         <header className="topbar">
           <div className="breadcrumb">
-            Workspace <span>/</span> Overview
+            Workspace <span>/</span> <strong>Overview</strong>
           </div>
 
-          <div className="local-badge">
-            <span className="status-dot" />
-            LOCAL DESKTOP APP
+          {/* Meaningful Dynamic Telemetry Pill */}
+          <div className="live-status-pill">
+            <span
+              className={`status-dot ${
+                isAnyChecking
+                  ? "checking"
+                  : allChecksSuccessful
+                  ? ""
+                  : completedChecks > 0
+                  ? "checking"
+                  : "idle"
+              }`}
+            />
+            <span>
+              {isAnyChecking
+                ? "Running diagnostics..."
+                : allChecksSuccessful
+                ? "All checks verified"
+                : completedChecks > 0
+                ? `${completedChecks}/3 checks completed`
+                : "Ready to scan"}
+            </span>
           </div>
         </header>
 
-        {/* WELCOME */}
+        {/* WELCOME / HERO */}
         <section className="welcome-section">
-          <div>
-            <div className="eyebrow">YOUR DIGITAL SAFETY WORKSPACE</div>
-
+          <div className="welcome-content">
+            <div className="eyebrow">Your Digital Safety Workspace</div>
             <h2>
               Security, made <span>clear.</span>
             </h2>
-
             <p>
               Understand your device&apos;s security status, review potential
-              issues, and verify improvements.
+              issues, and verify improvements with zero disruption.
             </p>
           </div>
 
-          <div className="shield-art" aria-hidden="true">
-            <div className="shield">✓</div>
+          <div className="welcome-visual" aria-hidden="true">
+            <div className="shield-graphic">
+              <div className="shield-ring" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </div>
           </div>
         </section>
 
         {/* INFORMATION NOTICE */}
         <section className="notice">
-          <span className="notice-icon">i</span>
+          <div className="notice-icon-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          </div>
 
-          <div>
+          <div className="notice-body">
             <strong>Read-only security checks</strong>
-
             <p>
               Digiture reads Windows Firewall profiles, registered antivirus
               products, and Microsoft Defender real-time protection status.
@@ -335,9 +386,9 @@ function App() {
           </div>
         </section>
 
-        {/* ACTION BUTTONS */}
+        {/* ACTION BUTTONS & HEADING */}
         <section className="section-heading">
-          <div>
+          <div className="section-title-row">
             <h3>Security overview</h3>
             <p>Your device status at a glance</p>
           </div>
@@ -349,55 +400,100 @@ function App() {
               onClick={refreshAllChecks}
               disabled={checkingAll}
             >
-              {checkingAll ? "Refreshing checks..." : "Refresh all checks"}
+              <svg
+                className={checkingAll ? "spin-icon" : ""}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+              </svg>
+              <span>{checkingAll ? "Refreshing all..." : "Refresh all checks"}</span>
             </button>
 
             <button
-              className="primary-button"
+              className="secondary-button"
               type="button"
               onClick={checkFirewall}
               disabled={checking}
             >
-              {checking ? "Checking firewall..." : "Check firewall"}
+              <svg
+                className={checking ? "spin-icon" : ""}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 9h18M3 15h18M9 3v6M15 9v6M9 15v6" />
+              </svg>
+              <span>{checking ? "Checking firewall..." : "Check firewall"}</span>
             </button>
 
             <button
-              className="primary-button"
+              className="secondary-button"
               type="button"
               onClick={checkAntivirus}
               disabled={checkingAntivirus}
             >
-              {checkingAntivirus
-                ? "Checking antivirus..."
-                : "Check antivirus"}
+              <svg
+                className={checkingAntivirus ? "spin-icon" : ""}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span>{checkingAntivirus ? "Checking antivirus..." : "Check antivirus"}</span>
             </button>
 
             <button
-              className="primary-button"
+              className="secondary-button"
               type="button"
               onClick={checkRealTimeProtection}
               disabled={checkingProtection}
             >
-              {checkingProtection
-                 ? "Checking protection..."
-                 : "Check real-time protection"}
+              <svg
+                className={checkingProtection ? "spin-icon" : ""}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <span>
+                {checkingProtection
+                  ? "Checking protection..."
+                  : "Check real-time protection"}
+              </span>
             </button>
-
-
-
-
           </div>
         </section>
 
-        {/* STATISTICS */}
+        {/* TELEMETRY / STATISTICS */}
         <section className="stats-grid">
           <article className="stat-card">
-            <div className="stat-top">
-              <span>Security score</span>
-              <span className="stat-icon purple">★</span>
+            <div className="stat-header">
+              <span className="stat-label">Security score</span>
+              <span className="stat-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                </svg>
+              </span>
             </div>
 
-            <div className="stat-number">
+            <div className={`stat-value ${securityScore !== null ? "accent" : ""}`}>
               {securityScore === null ? "—" : `${securityScore}%`}
             </div>
 
@@ -409,48 +505,70 @@ function App() {
           </article>
 
           <article className="stat-card">
-            <div className="stat-top">
-              <span>Security checks</span>
-              <span className="stat-icon purple">⌕</span>
+            <div className="stat-header">
+              <span className="stat-label">Security checks</span>
+              <span className="stat-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+              </span>
             </div>
 
-            <div className="stat-number">
+            <div className="stat-value">
               {(firewall?.success ? 1 : 0) +
                 (antivirus?.success ? 1 : 0) +
                 (protection?.success ? 1 : 0)}
+              <span style={{ fontSize: "16px", color: "var(--muted)", fontWeight: 500 }}> / 3</span>
             </div>
 
             <div className="stat-caption">
-              Successful checks
+              Successful checks completed
             </div>
           </article>
 
           <article className="stat-card">
-            <div className="stat-top">
-              <span>Firewall profiles</span>
-              <span className="stat-icon green">✓</span>
+            <div className="stat-header">
+              <span className="stat-label">Firewall profiles</span>
+              <span className="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </span>
             </div>
 
-            <div className="stat-number">
+            <div className="stat-value">
               {firewall?.success ? profiles.length : "—"}
             </div>
 
             <div className="stat-caption">
-              Profiles returned by Windows
+              Profiles reported by Windows
             </div>
           </article>
 
           <article className="stat-card">
-            <div className="stat-top">
-              <span>Firewall status</span>
-              <span className="stat-icon amber">!</span>
+            <div className="stat-header">
+              <span className="stat-label">Firewall status</span>
+              <span className={`stat-icon ${disabledCount > 0 ? "amber" : "green"}`}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  {disabledCount > 0 ? (
+                    <>
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </>
+                  ) : (
+                    <polyline points="20 6 9 17 4 12" />
+                  )}
+                </svg>
+              </span>
             </div>
 
-            <div className="stat-number">
+            <div className="stat-value">
               {firewall?.success
                 ? disabledCount > 0
-                  ? "!"
-                  : "✓"
+                  ? `${disabledCount} Disabled`
+                  : "Active"
                 : "—"}
             </div>
 
@@ -460,12 +578,16 @@ function App() {
           </article>
 
           <article className="stat-card">
-            <div className="stat-top">
-              <span>Antivirus products</span>
-              <span className="stat-icon green">🛡</span>
+            <div className="stat-header">
+              <span className="stat-label">Antivirus products</span>
+              <span className="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              </span>
             </div>
 
-            <div className="stat-number">
+            <div className="stat-value">
               {antivirus?.success ? antivirusProducts.length : "—"}
             </div>
 
@@ -473,8 +595,8 @@ function App() {
               {checkingAntivirus
                 ? "Checking antivirus..."
                 : antivirus?.success
-                  ? "Registered with Windows"
-                  : "Not checked"}
+                ? "Registered with Windows"
+                : "Not checked"}
             </div>
           </article>
         </section>
@@ -491,29 +613,37 @@ function App() {
               {(firewall?.success ? 1 : 0) +
                 (antivirus?.success ? 1 : 0) +
                 (protection?.success ? 1 : 0)}{" "}
-              CHECK(S)
+              / 3 VERIFIED
             </span>
           </div>
 
           {/* FIREWALL STATUS */}
           <article className="check-row">
-            <div className="check-symbol">⬡</div>
+            <div className="check-symbol" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 9h18M3 15h18M9 3v6M15 9v6M9 15v6" />
+              </svg>
+            </div>
 
             <div className="check-info">
               <strong>Windows Firewall</strong>
               <p>Reads the status of Windows Firewall profiles.</p>
             </div>
 
-            <span className="check-status">
+            <span
+              className={`check-status ${
+                firewall?.success ? "success" : error ? "error" : ""
+              }`}
+            >
               <span className="small-dot" />
-
               {checking
                 ? "Checking"
                 : firewall?.success
-                  ? "Retrieved"
-                  : error
-                    ? "Failed"
-                    : "Not checked"}
+                ? "Retrieved"
+                : error
+                ? "Failed"
+                : "Not checked"}
             </span>
 
             <span className="row-arrow">›</span>
@@ -537,7 +667,6 @@ function App() {
                       <strong>
                         {profile.Name ?? `Profile ${index + 1}`}
                       </strong>
-
                       <p>
                         {enabled
                           ? "Windows reports this profile is enabled."
@@ -545,7 +674,11 @@ function App() {
                       </p>
                     </div>
 
-                    <span className="check-status">
+                    <span
+                      className={`check-status ${
+                        enabled ? "success" : "warning"
+                      }`}
+                    >
                       <span className="small-dot" />
                       {enabled ? "Enabled" : "Disabled"}
                     </span>
@@ -557,28 +690,34 @@ function App() {
 
           {/* ANTIVIRUS STATUS */}
           <article className="check-row">
-            <div className="check-symbol">🛡</div>
+            <div className="check-symbol" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+            </div>
 
             <div className="check-info">
               <strong>Registered antivirus</strong>
-
               <p>
                 Lists antivirus products reported by Windows Security Center.
                 Registration alone does not confirm that real-time protection
-                is enabled.
+                is active.
               </p>
             </div>
 
-            <span className="check-status">
+            <span
+              className={`check-status ${
+                antivirus?.success ? "success" : antivirusError ? "error" : ""
+              }`}
+            >
               <span className="small-dot" />
-
               {checkingAntivirus
                 ? "Checking"
                 : antivirus?.success
-                  ? "Retrieved"
-                  : antivirusError
-                    ? "Failed"
-                    : "Not checked"}
+                ? "Retrieved"
+                : antivirusError
+                ? "Failed"
+                : "Not checked"}
             </span>
 
             <span className="row-arrow">›</span>
@@ -600,22 +739,19 @@ function App() {
                     >
                       <div className="check-info">
                         <strong>
-                          {product.displayName ??
-                            "Unnamed antivirus product"}
+                          {product.displayName ?? "Unnamed antivirus product"}
                         </strong>
-
                         <p>
                           Registered with Windows Security Center. The raw
                           product-state value is{" "}
                           {typeof product.productState === "number"
                             ? product.productState
                             : "not provided"}
-                          . This value alone does not confirm that protection
-                          is active.
+                          . This value alone does not confirm active real-time protection.
                         </p>
                       </div>
 
-                      <span className="check-status">
+                      <span className="check-status success">
                         <span className="small-dot" />
                         Registered
                       </span>
@@ -623,105 +759,129 @@ function App() {
                   );
                 })
               ) : (
-                <p>
-                  Windows returned no registered antivirus products.
-                </p>
+                <p>Windows returned no registered antivirus products.</p>
               )}
 
-              <p>{antivirus.details}</p>
+              {antivirus.details && <p>{antivirus.details}</p>}
             </div>
           )}
-          
+
           {/* REAL-TIME PROTECTION STATUS */}
+          <article className="check-row">
+            <div className="check-symbol" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+            </div>
 
-<article className="check-row">
-  <div className="check-symbol">🛡</div>
+            <div className="check-info">
+              <strong>Windows Defender Real-Time Protection</strong>
+              <p>
+                Checks whether Microsoft Defender reports that real-time threat
+                monitoring is active.
+              </p>
+            </div>
 
-  <div className="check-info">
-    <strong>Windows Defender Real-Time Protection</strong>
+            <span
+              className={`check-status ${
+                protection?.success
+                  ? protection.real_time_protection_enabled === true
+                    ? "success"
+                    : "warning"
+                  : protectionError
+                  ? "error"
+                  : ""
+              }`}
+            >
+              <span className="small-dot" />
+              {checkingProtection
+                ? "Checking"
+                : protection?.success
+                ? protection.real_time_protection_enabled === true
+                  ? "Enabled"
+                  : protection.real_time_protection_enabled === false
+                  ? "Disabled"
+                  : "Unknown"
+                : protectionError
+                ? "Failed"
+                : "Not checked"}
+            </span>
 
-```
-<p>
-  Checks whether Microsoft Defender reports that real-time threat
-  monitoring is enabled.
-</p>
-```
+            <span className="row-arrow">›</span>
+          </article>
 
-  </div>
+          {/* REAL-TIME PROTECTION DETAILS */}
+          {protection?.success && (
+            <div className="firewall-results">
+              <h4>Real-time protection details</h4>
 
-  <span className="check-status">
-    <span className="small-dot" />
+              <article className="check-row">
+                <div className="check-info">
+                  <strong>Antivirus engine service</strong>
+                  <p>
+                    Whether Windows reports the Defender antivirus service as enabled.
+                  </p>
+                </div>
 
-```
-{checkingProtection
-  ? "Checking"
-  : protection?.success
-    ? protection.real_time_protection_enabled === true
-      ? "Enabled"
-      : protection.real_time_protection_enabled === false
-        ? "Disabled"
-        : "Unknown"
-    : protectionError
-      ? "Failed"
-      : "Not checked"}
-```
+                <span
+                  className={`check-status ${
+                    protection.antivirus_enabled === true
+                      ? "success"
+                      : protection.antivirus_enabled === false
+                      ? "warning"
+                      : ""
+                  }`}
+                >
+                  <span className="small-dot" />
+                  {protection.antivirus_enabled === true
+                    ? "Enabled"
+                    : protection.antivirus_enabled === false
+                    ? "Disabled"
+                    : "Unknown"}
+                </span>
+              </article>
 
-  </span>
-</article>
+              <article className="check-row">
+                <div className="check-info">
+                  <strong>Real-time threat monitoring</strong>
+                  <p>
+                    Whether Windows reports Defender real-time protection as actively scanning.
+                  </p>
+                </div>
 
-{protection?.success && (
+                <span
+                  className={`check-status ${
+                    protection.real_time_protection_enabled === true
+                      ? "success"
+                      : protection.real_time_protection_enabled === false
+                      ? "warning"
+                      : ""
+                  }`}
+                >
+                  <span className="small-dot" />
+                  {protection.real_time_protection_enabled === true
+                    ? "Enabled"
+                    : protection.real_time_protection_enabled === false
+                    ? "Disabled"
+                    : "Unknown"}
+                </span>
+              </article>
 
-  <div className="firewall-results">
-    <h4>Real-time protection details</h4>
-
-```
-<article className="check-row">
-  <div className="check-info">
-    <strong>Antivirus engine</strong>
-    <p>
-      Whether Windows reports the Defender antivirus service as enabled.
-    </p>
-  </div>
-
-  <span className="check-status">
-    {protection.antivirus_enabled === true
-      ? "Enabled"
-      : protection.antivirus_enabled === false
-        ? "Disabled"
-        : "Unknown"}
-  </span>
-</article>
-
-<article className="check-row">
-  <div className="check-info">
-    <strong>Real-time monitoring</strong>
-    <p>
-      Whether Windows reports Defender real-time protection as enabled.
-    </p>
-  </div>
-
-  <span className="check-status">
-    {protection.real_time_protection_enabled === true
-      ? "Enabled"
-      : protection.real_time_protection_enabled === false
-        ? "Disabled"
-        : "Unknown"}
-  </span>
-</article>
-
-<p>{protection.details}</p>
-```
-
-  </div>
-)}
-
+              {protection.details && <p>{protection.details}</p>}
+            </div>
+          )}
 
           {/* ERROR MESSAGES */}
           {error && (
             <div className="notice error-notice" role="alert">
-              <span className="notice-icon">!</span>
-
-              <div>
+              <div className="notice-icon-box" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <div className="notice-body">
                 <strong>Firewall check failed</strong>
                 <p>{error}</p>
               </div>
@@ -730,9 +890,14 @@ function App() {
 
           {antivirusError && (
             <div className="notice error-notice" role="alert">
-              <span className="notice-icon">!</span>
-
-              <div>
+              <div className="notice-icon-box" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <div className="notice-body">
                 <strong>Antivirus check failed</strong>
                 <p>{antivirusError}</p>
               </div>
@@ -740,35 +905,40 @@ function App() {
           )}
 
           {protectionError && (
-  <div className="notice error-notice" role="alert">
-    <span className="notice-icon">!</span>
-
-    <div>
-      <strong>Real-time protection check failed</strong>
-      <p>{protectionError}</p>
-    </div>
-  </div>
-)}
+            <div className="notice error-notice" role="alert">
+              <div className="notice-icon-box" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <div className="notice-body">
+                <strong>Real-time protection check failed</strong>
+                <p>{protectionError}</p>
+              </div>
+            </div>
+          )}
 
           {/* FOOTER MESSAGE */}
           {(firewall?.success || antivirus?.success || protection?.success) && (
             <div className="panel-footer">
               <span className="footer-dot" />
-              Read-only results retrieved. No security settings were changed.
+              Read-only telemetry retrieved directly from Windows API. No changes were made.
             </div>
           )}
 
           {!firewall && !antivirus && !protection && !error && !antivirusError && !protectionError && (
             <div className="panel-footer">
               <span className="footer-dot" />
-              Select a check above to retrieve the current status.
+              Select a diagnostic check above to inspect current security posture.
             </div>
           )}
         </section>
 
         <footer className="app-footer">
           <span>Digiture · Transparency and user control</span>
-          <span>PREVIEW BUILD</span>
+          <span>Read-only Security Diagnostics</span>
         </footer>
       </main>
     </div>

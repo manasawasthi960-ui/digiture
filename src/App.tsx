@@ -43,6 +43,7 @@ function App() {
   const [checkingProtection, setCheckingProtection] = useState(false);
   const [protection, setProtection] = useState<RealTimeProtectionStatus | null>(null);
   const [protectionError, setProtectionError] = useState("");
+  const [checkingAll, setCheckingAll] = useState(false);
 
   async function checkFirewall() {
     if (checking) return;
@@ -115,6 +116,21 @@ function App() {
   }
 }
 
+  async function refreshAllChecks() {
+    if (checkingAll) return;
+
+    setCheckingAll(true);
+    try {
+      await Promise.all([
+        checkFirewall(),
+        checkAntivirus(),
+        checkRealTimeProtection(),
+      ]);
+    } finally {
+      setCheckingAll(false);
+    }
+  }
+
   function getAntivirusProducts(): AntivirusProduct[] {
     if (!antivirus?.success || !antivirus.products) {
       return [];
@@ -159,6 +175,26 @@ function App() {
   const disabledCount = profiles.filter(
     (profile) => String(profile.Enabled).toLowerCase() === "false"
   ).length;
+
+  const allChecksSuccessful =
+    firewall?.success === true &&
+    antivirus?.success === true &&
+    protection?.success === true;
+
+  const securityScore = allChecksSuccessful
+    ? (profiles.length > 0 && profiles.every(
+        (profile) => String(profile.Enabled).toLowerCase() === "true"
+      )
+        ? 40
+        : 0) +
+      (antivirusProducts.length > 0 ? 30 : 0) +
+      (protection?.real_time_protection_enabled === true ? 30 : 0)
+    : null;
+
+  const completedChecks =
+    (firewall !== null ? 1 : 0) +
+    (antivirus !== null ? 1 : 0) +
+    (protection !== null ? 1 : 0);
 
   function getFirewallSummary(): string {
     if (!firewall?.success) {
@@ -291,9 +327,10 @@ function App() {
             <strong>Read-only security checks</strong>
 
             <p>
-              Digiture reads Windows Firewall profile status and registered
-              antivirus products. It does not change security settings.
-              These checks do not constitute a complete security assessment.
+              Digiture reads Windows Firewall profiles, registered antivirus
+              products, and Microsoft Defender real-time protection status.
+              It does not change security settings. The score is an informational
+              indicator based only on these checks, not a complete security assessment.
             </p>
           </div>
         </section>
@@ -306,6 +343,15 @@ function App() {
           </div>
 
           <div className="action-buttons">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={refreshAllChecks}
+              disabled={checkingAll}
+            >
+              {checkingAll ? "Refreshing checks..." : "Refresh all checks"}
+            </button>
+
             <button
               className="primary-button"
               type="button"
@@ -345,6 +391,23 @@ function App() {
 
         {/* STATISTICS */}
         <section className="stats-grid">
+          <article className="stat-card">
+            <div className="stat-top">
+              <span>Security score</span>
+              <span className="stat-icon purple">★</span>
+            </div>
+
+            <div className="stat-number">
+              {securityScore === null ? "—" : `${securityScore}%`}
+            </div>
+
+            <div className="stat-caption">
+              {securityScore === null
+                ? `${completedChecks}/3 checks returned results`
+                : "Based on these three checks only"}
+            </div>
+          </article>
+
           <article className="stat-card">
             <div className="stat-top">
               <span>Security checks</span>
@@ -688,14 +751,14 @@ function App() {
 )}
 
           {/* FOOTER MESSAGE */}
-          {(firewall?.success || antivirus?.success) && (
+          {(firewall?.success || antivirus?.success || protection?.success) && (
             <div className="panel-footer">
               <span className="footer-dot" />
               Read-only results retrieved. No security settings were changed.
             </div>
           )}
 
-          {!firewall && !antivirus && !error && !antivirusError && (
+          {!firewall && !antivirus && !protection && !error && !antivirusError && !protectionError && (
             <div className="panel-footer">
               <span className="footer-dot" />
               Select a check above to retrieve the current status.

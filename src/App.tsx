@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type FirewallProfile = {
@@ -32,6 +33,26 @@ type RealTimeProtectionStatus = {
   details: string;
 };
 
+
+
+type FileScanResult = {
+  name: string;
+  path: string;
+  extension: string;
+  size: number;
+  sha256: string | null;
+  status: string;
+  findings: string[];
+};
+
+type ScanReport = {
+  success: boolean;
+  scanned: number;
+  skipped: number;
+  results: FileScanResult[];
+  details: string;
+};
+
 function App() {
   const [checking, setChecking] = useState(false);
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
@@ -46,6 +67,10 @@ function App() {
   const [protectionError, setProtectionError] = useState("");
 
   const [checkingAll, setCheckingAll] = useState(false);
+  const [scanningFiles, setScanningFiles] = useState(false);
+const [selectedPath, setSelectedPath] = useState("");
+const [scanReport, setScanReport] = useState<ScanReport | null>(null);
+const [scanError, setScanError] = useState("");
 
   async function checkFirewall() {
     if (checking) return;
@@ -113,6 +138,68 @@ function App() {
       setCheckingAll(false);
     }
   }
+
+  async function selectFile() {
+  setScanError("");
+
+  try {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: "Select a file to inspect",
+    });
+
+    if (typeof selected === "string") {
+      setSelectedPath(selected);
+      setScanReport(null);
+    }
+  } catch (err) {
+    setScanError(String(err));
+  }
+}
+
+async function selectFolder() {
+  setScanError("");
+
+  try {
+    const selected = await open({
+      multiple: false,
+      directory: true,
+      title: "Select a folder to inspect",
+    });
+
+    if (typeof selected === "string") {
+      setSelectedPath(selected);
+      setScanReport(null);
+    }
+  } catch (err) {
+    setScanError(String(err));
+  }
+}
+
+async function startFileScan() {
+  if (!selectedPath || scanningFiles) return;
+
+  setScanningFiles(true);
+  setScanError("");
+  setScanReport(null);
+
+  try {
+    const result = await invoke<ScanReport>("scan_selected_path", {
+      path: selectedPath,
+    });
+
+    setScanReport(result);
+
+    if (!result.success) {
+      setScanError(result.details || "File scan failed.");
+    }
+  } catch (err) {
+    setScanError(String(err));
+  } finally {
+    setScanningFiles(false);
+  }
+}
 
   function getAntivirusProducts(): AntivirusProduct[] {
     if (!antivirus?.success || !antivirus.products) return [];
@@ -423,6 +510,116 @@ function App() {
           </article>
         </section>
 
+
+        {/* THREAT SCANNER */}
+<section className="checks-panel" id="threat-scanner">
+  <div className="panel-heading">
+    <div>
+      <h3>Threat Scanner</h3>
+      <p>Inspect selected files and folders for basic suspicious indicators.</p>
+    </div>
+    <span className="check-count">READ-ONLY</span>
+  </div>
+
+  <div style={{ padding: "20px" }}>
+    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+      <button
+        className="primary-button"
+        type="button"
+        onClick={selectFile}
+        disabled={scanningFiles}
+      >
+        Select File
+      </button>
+
+      <button
+        className="secondary-button"
+        type="button"
+        onClick={selectFolder}
+        disabled={scanningFiles}
+      >
+        Select Folder
+      </button>
+
+      <button
+        className="primary-button"
+        type="button"
+        onClick={startFileScan}
+        disabled={!selectedPath || scanningFiles}
+      >
+        {scanningFiles ? "Scanning..." : "Start Scan"}
+      </button>
+    </div>
+
+    {selectedPath && (
+      <p style={{ marginTop: "16px", overflowWrap: "anywhere" }}>
+        <strong>Selected path:</strong> {selectedPath}
+      </p>
+    )}
+
+    {scanError && (
+      <div className="notice error-notice" role="alert">
+        <div className="notice-body">
+          <strong>Scanner error</strong>
+          <p>{scanError}</p>
+        </div>
+      </div>
+    )}
+
+    {scanReport && (
+      <div style={{ marginTop: "24px" }}>
+        <h4>Scan Results</h4>
+
+        <p>
+          Files inspected: <strong>{scanReport.scanned}</strong>
+          {" · "}
+          Skipped: <strong>{scanReport.skipped}</strong>
+        </p>
+
+        <p>{scanReport.details}</p>
+
+        {scanReport.results.map((file, index) => (
+          <article
+            className="check-row"
+            key={`${file.path}-${index}`}
+            style={{ alignItems: "flex-start" }}
+          >
+            <div className="check-info">
+              <strong>{file.name}</strong>
+
+              <p>Size: {(file.size / 1024).toFixed(2)} KB</p>
+
+              <p>Extension: {file.extension || "None"}</p>
+
+              <p>Status: {file.status}</p>
+
+              {file.sha256 && (
+                <p style={{ overflowWrap: "anywhere" }}>
+                  SHA-256: {file.sha256}
+                </p>
+              )}
+
+              {file.findings.length > 0 && (
+                <ul>
+                  {file.findings.map((finding, findingIndex) => (
+                    <li key={findingIndex}>{finding}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    )}
+  </div>
+
+  <div className="panel-footer">
+    <span className="footer-dot" />
+    Read-only inspection. No files are deleted, modified, or quarantined.
+    Heuristic findings are not confirmed malware detections.
+  </div>
+</section>
+
         <section className="checks-panel" id="security-results">
           <div className="panel-heading">
             <div>
@@ -570,6 +767,9 @@ function App() {
       </main>
     </div>
   );
+
+
+
 }
 
 export default App;

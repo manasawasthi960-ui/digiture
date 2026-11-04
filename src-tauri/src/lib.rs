@@ -233,25 +233,36 @@ fn classify_severity(
     is_executable: bool,
     double_extension: bool,
 ) -> String {
-    if findings.is_empty() {
-        return "Low".to_string();
+    let mut risk_score = 0;
+
+    // Executable or script file
+    if is_executable {
+        risk_score += 2;
     }
 
-    // Particularly concerning combination
-    if is_executable && double_extension {
-        return "High".to_string();
+    // Multiple filename extensions
+    if double_extension {
+        risk_score += 3;
     }
 
-    // Multiple suspicious indicators
+    // Hidden filename
+    if findings.iter().any(|f| f.contains("Hidden filename")) {
+        risk_score += 1;
+    }
+
+    // Other suspicious indicators
     if findings.len() >= 3 {
-        return "High".to_string();
+        risk_score += 2;
     }
 
-    if !findings.is_empty() {
-        return "Medium".to_string();
+    // Determine severity
+    if risk_score >= 5 {
+        "High".to_string()
+    } else if risk_score >= 2 {
+        "Medium".to_string()
+    } else {
+        "Low".to_string()
     }
-
-    "Low".to_string()
 }
 
 
@@ -311,12 +322,37 @@ fn inspect_file(path: &Path) -> FileScanResult {
 
     let double_extension = name.matches('.').count() > 1;
 
-    if double_extension {
-        findings.push(
-            "Multiple filename extensions detected. Verify the actual file type."
-                .to_string(),
-        );
-    }
+if double_extension {
+    findings.push(
+        "Multiple filename extensions detected. Verify the actual file type."
+            .to_string(),
+    );
+}
+
+// Check whether an executable is disguised with a familiar document or image extension.
+let filename_parts: Vec<&str> = name.split('.').collect();
+
+let misleading_extensions = [
+    "pdf", "jpg", "jpeg", "png", "gif",
+    "doc", "docx", "xls", "xlsx",
+    "txt", "mp3", "mp4",
+];
+
+let misleading_executable =
+    is_executable
+    && filename_parts
+        .iter()
+        .take(filename_parts.len().saturating_sub(1))
+        .any(|part| {
+            misleading_extensions.contains(&part.to_lowercase().as_str())
+        });
+
+if misleading_executable {
+    findings.push(
+        "Potentially misleading filename: executable uses a familiar document or media extension."
+            .to_string(),
+    );
+}
 
     // File size limit
     if size > MAX_FILE_SIZE {

@@ -36,6 +36,7 @@ struct FileScanResult {
     size: u64,
     sha256: Option<String>,
     status: String,
+    severity: String,
     findings: Vec<String>,
 }
 
@@ -227,6 +228,33 @@ const MAX_FILES: usize = 500;
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 const MAX_DEPTH: usize = 8;
 
+fn classify_severity(
+    findings: &[String],
+    is_executable: bool,
+    double_extension: bool,
+) -> String {
+    if findings.is_empty() {
+        return "Low".to_string();
+    }
+
+    // Particularly concerning combination
+    if is_executable && double_extension {
+        return "High".to_string();
+    }
+
+    // Multiple suspicious indicators
+    if findings.len() >= 3 {
+        return "High".to_string();
+    }
+
+    if !findings.is_empty() {
+        return "Medium".to_string();
+    }
+
+    "Low".to_string()
+}
+
+
 fn inspect_file(path: &Path) -> FileScanResult {
     let name = path
         .file_name()
@@ -250,7 +278,10 @@ fn inspect_file(path: &Path) -> FileScanResult {
                 size: 0,
                 sha256: None,
                 status: "Could not scan".to_string(),
-                findings: vec!["File metadata could not be read.".to_string()],
+                severity: "Unknown".to_string(),
+                findings: vec![
+                    "File metadata could not be read.".to_string()
+                ],
             };
         }
     };
@@ -263,7 +294,9 @@ fn inspect_file(path: &Path) -> FileScanResult {
         "ps1", "vbs", "js", "hta", "msi",
     ];
 
-    if suspicious_extensions.contains(&extension.as_str()) {
+    let is_executable = suspicious_extensions.contains(&extension.as_str());
+
+    if is_executable {
         findings.push(
             "Executable or script file. Review its source before opening."
                 .to_string(),
@@ -271,7 +304,9 @@ fn inspect_file(path: &Path) -> FileScanResult {
     }
 
     if name.starts_with('.') {
-        findings.push("Hidden filename characteristic detected.".to_string());
+        findings.push(
+            "Hidden filename characteristic detected.".to_string(),
+        );
     }
 
     let double_extension = name.matches('.').count() > 1;
@@ -283,9 +318,16 @@ fn inspect_file(path: &Path) -> FileScanResult {
         );
     }
 
+    // File size limit
     if size > MAX_FILE_SIZE {
         findings.push(
             "File exceeds the current 100 MB hashing limit.".to_string(),
+        );
+
+        let severity = classify_severity(
+            &findings,
+            is_executable,
+            double_extension,
         );
 
         return FileScanResult {
@@ -295,14 +337,18 @@ fn inspect_file(path: &Path) -> FileScanResult {
             size,
             sha256: None,
             status: "Could not scan".to_string(),
+            severity,
             findings,
         };
     }
 
+    // Open file
     let file = match File::open(path) {
         Ok(file) => file,
         Err(_) => {
-            findings.push("File could not be opened for reading.".to_string());
+            findings.push(
+                "File could not be opened for reading.".to_string(),
+            );
 
             return FileScanResult {
                 name,
@@ -311,11 +357,13 @@ fn inspect_file(path: &Path) -> FileScanResult {
                 size,
                 sha256: None,
                 status: "Could not scan".to_string(),
+                severity: "Unknown".to_string(),
                 findings,
             };
         }
     };
 
+    // Calculate SHA-256
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192];
@@ -323,11 +371,15 @@ fn inspect_file(path: &Path) -> FileScanResult {
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
+
             Ok(bytes_read) => {
                 hasher.update(&buffer[..bytes_read]);
             }
+
             Err(_) => {
-                findings.push("An error occurred while reading the file.".to_string());
+                findings.push(
+                    "An error occurred while reading the file.".to_string(),
+                );
 
                 return FileScanResult {
                     name,
@@ -336,17 +388,26 @@ fn inspect_file(path: &Path) -> FileScanResult {
                     size,
                     sha256: None,
                     status: "Could not scan".to_string(),
+                    severity: "Unknown".to_string(),
                     findings,
                 };
             }
         }
     }
 
-let hash = hasher
-    .finalize()
-    .iter()
-    .map(|byte| format!("{:02x}", byte))
-    .collect::<String>();
+    let hash = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+
+    // Calculate severity
+    let severity = classify_severity(
+        &findings,
+        is_executable,
+        double_extension,
+    );
+
     let status = if findings.is_empty() {
         "No indicators found".to_string()
     } else {
@@ -360,6 +421,7 @@ let hash = hasher
         size,
         sha256: Some(hash),
         status,
+        severity,
         findings,
     }
 }

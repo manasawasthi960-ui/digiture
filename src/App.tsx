@@ -42,6 +42,7 @@ type FileScanResult = {
   size: number;
   sha256: string | null;
   status: string;
+  severity: string;
   findings: string[];
 };
 
@@ -591,8 +592,39 @@ async function startFileScan() {
 
               <p>Extension: {file.extension || "None"}</p>
 
-              <p>Status: {file.status}</p>
+<p>
+  <strong>Status:</strong> {file.status}
+</p>
 
+<p>
+  <strong>Severity:</strong>{" "}
+  <span
+    style={{
+      display: "inline-block",
+      padding: "4px 10px",
+      borderRadius: "6px",
+      fontWeight: 700,
+      backgroundColor:
+        file.severity === "High"
+          ? "#fee2e2"
+          : file.severity === "Medium"
+          ? "#fef3c7"
+          : file.severity === "Unknown"
+          ? "#e5e7eb"
+          : "#dcfce7",
+      color:
+        file.severity === "High"
+          ? "#b91c1c"
+          : file.severity === "Medium"
+          ? "#92400e"
+          : file.severity === "Unknown"
+          ? "#374151"
+          : "#166534",
+    }}
+  >
+    {file.severity}
+  </span>
+</p>
               {file.sha256 && (
                 <p style={{ overflowWrap: "anywhere" }}>
                   SHA-256: {file.sha256}
@@ -619,6 +651,7 @@ async function startFileScan() {
     Heuristic findings are not confirmed malware detections.
   </div>
 </section>
+
 
         <section className="checks-panel" id="security-results">
           <div className="panel-heading">

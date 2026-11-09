@@ -69,9 +69,23 @@ function App() {
 
   const [checkingAll, setCheckingAll] = useState(false);
   const [scanningFiles, setScanningFiles] = useState(false);
-const [selectedPath, setSelectedPath] = useState("");
-const [scanReport, setScanReport] = useState<ScanReport | null>(null);
-const [scanError, setScanError] = useState("");
+  const [selectedPath, setSelectedPath] = useState("");
+  const [scanReport, setScanReport] = useState<ScanReport | null>(null);
+  const [scanError, setScanError] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("All");
+
+const allFindings =
+  scanReport?.results.filter(
+    (result) =>
+      result.findings.length > 0 || result.severity === "Low"
+  ) ?? [];
+
+const filteredFindings =
+  severityFilter === "All"
+    ? allFindings
+    : allFindings.filter(
+        (result) => (result.severity || "Unknown") === severityFilter
+      );
 
   async function checkFirewall() {
     if (checking) return;
@@ -650,10 +664,121 @@ async function startFileScan() {
     Read-only inspection. No files are deleted, modified, or quarantined.
     Heuristic findings are not confirmed malware detections.
   </div>
+
+  </section>
+
+{/* FINDINGS DASHBOARD */}
+<section className="checks-panel" id="findings-dashboard">
+  <div className="panel-heading">
+    <div>
+      <h3>Findings Dashboard</h3>
+      <p>Review suspicious indicators identified during your scans.</p>
+    </div>
+
+    <span className="check-count">
+      {allFindings.length} findings
+    </span>
+  </div>
+
+  <div style={{ padding: "20px" }}>
+
+    {/* SEVERITY FILTERS */}
+    <div
+      style={{
+        display: "flex",
+        gap: "10px",
+        flexWrap: "wrap",
+        marginBottom: "24px",
+      }}
+    >
+      {["All", "High", "Medium", "Low", "Unknown"].map((level) => (
+        <button
+          key={level}
+          type="button"
+          className={
+            severityFilter === level
+              ? "primary-button"
+              : "secondary-button"
+          }
+          onClick={() => setSeverityFilter(level)}
+        >
+          {level}
+          {level === "All"
+            ? ` (${allFindings.length})`
+            : ` (${allFindings.filter(
+                (item) => (item.severity || "Unknown") === level
+              ).length})`}
+        </button>
+      ))}
+    </div>
+
+    {/* FINDINGS LIST */}
+    {filteredFindings.length > 0 ? (
+      filteredFindings.map((file, index) => (
+        <article
+          className="check-row"
+          key={`${file.path}-${index}`}
+          style={{
+            alignItems: "flex-start",
+            marginBottom: "14px",
+          }}
+        >
+          <div className="check-info">
+            <strong>{file.name}</strong>
+
+            <p style={{ overflowWrap: "anywhere" }}>
+              <strong>Location:</strong> {file.path}
+            </p>
+
+            <p>
+              <strong>Severity:</strong>{" "}
+              <span
+                style={{
+                  fontWeight: 700,
+                  color:
+                    file.severity === "High"
+                      ? "#dc2626"
+                      : file.severity === "Medium"
+                      ? "#d97706"
+                      : file.severity === "Unknown"
+                      ? "#6b7280"
+                      : "#16a34a",
+                }}
+              >
+                {file.severity || "Unknown"}
+              </span>
+            </p>
+
+            <strong>Why it was flagged:</strong>
+
+            <ul>
+              {file.findings.map((finding, findingIndex) => (
+                <li key={findingIndex}>{finding}</li>
+              ))}
+            </ul>
+          </div>
+        </article>
+      ))
+    ) : (
+      <div className="panel-footer">
+        <span className="footer-dot" />
+        {scanReport
+          ? "No findings match this severity filter."
+          : "Run a Threat Scanner scan to populate your findings dashboard."}
+      </div>
+    )}
+
+  </div>
+
+  <div className="panel-footer">
+    <span className="footer-dot" />
+    Findings are heuristic indicators, not confirmed malware detections.
+    Review each result before taking action.
+  </div>
 </section>
 
+<section className="checks-panel" id="security-results">
 
-        <section className="checks-panel" id="security-results">
           <div className="panel-heading">
             <div>
               <h2>Security checkup</h2>

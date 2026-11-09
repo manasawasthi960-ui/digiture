@@ -66,6 +66,22 @@ type PrivacyAuditStatus = {
   details: string;
 };
 
+type JunkFileCandidate = {
+  name: string;
+  path: string;
+  size_bytes: number;
+  modified_days: number;
+};
+
+type JunkScanReport = {
+  success: boolean;
+  scanned_files: number;
+  candidate_files: number;
+  skipped_files: number;
+  total_candidate_bytes: number;
+  candidates: JunkFileCandidate[];
+  details: string;
+};
 
 function App() {
   const [checking, setChecking] = useState(false);
@@ -89,6 +105,10 @@ function App() {
   const [privacyAudit, setPrivacyAudit] = useState<PrivacyAuditStatus | null>(null);
 const [privacyAuditing, setPrivacyAuditing] = useState(false);
 const [privacyError, setPrivacyError] = useState("");
+const [junkReport, setJunkReport] = useState<JunkScanReport | null>(null);
+const [junkScanning, setJunkScanning] = useState(false);
+const [junkError, setJunkError] = useState("");
+
 
 const allFindings =
   scanReport?.results.filter(
@@ -254,6 +274,29 @@ async function runPrivacyAudit() {
     setPrivacyError(String(err));
   } finally {
     setPrivacyAuditing(false);
+  }
+}
+
+async function runJunkScan() {
+  if (junkScanning) return;
+
+  setJunkScanning(true);
+  setJunkError("");
+  setJunkReport(null);
+
+  try {
+    const result = await invoke<JunkScanReport>("scan_junk_files");
+
+    setJunkReport(result);
+
+    if (!result.success) {
+      setJunkError(result.details || "Junk scan failed.");
+    }
+  } catch (err) {
+    setJunkReport(null);
+    setJunkError(String(err));
+  } finally {
+    setJunkScanning(false);
   }
 }
 
@@ -892,6 +935,72 @@ async function runPrivacyAudit() {
     installed application or prove that an application is currently using a
     permission.
   </div>
+</section>
+
+<section className="checks-panel" id="junk-cleaner">
+  <div className="panel-header">
+    <div>
+      <h2>Junk Cleaner</h2>
+      <p>Find old temporary files taking up storage space.</p>
+    </div>
+
+    <button
+      onClick={runJunkScan}
+      disabled={junkScanning}
+    >
+      {junkScanning ? "Scanning..." : "Scan Temporary Files"}
+    </button>
+  </div>
+
+  <p>
+    Read-only scan · Current user's temporary folder · Files older
+    than 7 days
+  </p>
+
+  {junkError && (
+    <p role="alert">{junkError}</p>
+  )}
+
+  {junkReport && (
+    <>
+      <div>
+        <p>Files inspected: {junkReport.scanned_files}</p>
+        <p>Potential candidates: {junkReport.candidate_files}</p>
+        <p>Skipped entries: {junkReport.skipped_files}</p>
+        <p>
+          Potential storage:
+          {" "}
+          {(junkReport.total_candidate_bytes / (1024 * 1024)).toFixed(2)}
+          {" MB"}
+        </p>
+      </div>
+
+      <p>{junkReport.details}</p>
+
+      {junkReport.candidates.length > 0 ? (
+        <div>
+          {junkReport.candidates.map((file, index) => (
+            <div key={`${file.path}-${index}`}>
+              <h3>{file.name}</h3>
+              <p>{file.path}</p>
+              <p>Last modified: {file.modified_days} days ago</p>
+              <p>
+                Size: {(file.size_bytes / 1024).toFixed(2)} KB
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>No potential cleanup candidates were found.</p>
+      )}
+    </>
+  )}
+
+  <p>
+    ⚠️ These are only potential cleanup candidates. Some files may
+    still be required by running applications. Digiture has not
+    deleted or modified any files.
+  </p>
 </section>
 
 <section className="checks-panel" id="security-results">

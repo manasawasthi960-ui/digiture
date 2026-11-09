@@ -43,6 +43,25 @@ struct PrivacyAuditStatus {
 }
 
 #[derive(Serialize)]
+struct JunkFileCandidate {
+    name: String,
+    path: String,
+    size_bytes: u64,
+    modified_days: u64,
+}
+
+#[derive(Serialize)]
+struct JunkScanReport {
+    success: bool,
+    scanned_files: usize,
+    candidate_files: usize,
+    skipped_files: usize,
+    total_candidate_bytes: u64,
+    candidates: Vec<JunkFileCandidate>,
+    details: String,
+}
+
+#[derive(Serialize)]
 struct FileScanResult {
     name: String,
     path: String,
@@ -365,6 +384,124 @@ fn audit_privacy_permissions() -> PrivacyAuditStatus {
                 "Could not run the privacy audit: {error}"
             ),
         },
+    }
+}
+
+
+#[tauri::command]
+fn scan_junk_files() -> JunkScanReport {
+    const MAX_FILES: usize = 1000;
+    const MIN_AGE_DAYS: u64 = 7;
+
+    let temp_path = std::env::temp_dir();
+
+    let entries = match fs::read_dir(&temp_path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return JunkScanReport {
+                success: false,
+                scanned_files: 0,
+                candidate_files: 0,
+                skipped_files: 0,
+                total_candidate_bytes: 0,
+                candidates: Vec::new(),
+                details: format!(
+                    "Could not access the temporary folder: {error}"
+                ),
+            };
+        }
+    };
+
+    let mut scanned_files = 0;
+    let mut skipped_files = 0;
+    let mut total_candidate_bytes = 0u64;
+    let mut candidates = Vec::new();
+
+    let now = std::time::SystemTime::now();
+
+    for entry_result in entries {
+        if scanned_files + skipped_files >= MAX_FILES {
+            break;
+        }
+
+        let entry = match entry_result {
+            Ok(entry) => entry,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+
+        if !file_type.is_file() {
+            skipped_files += 1;
+            continue;
+        }
+
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+
+        let modified = match metadata.modified() {
+            Ok(time) => time,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+
+        let age = match now.duration_since(modified) {
+            Ok(age) => age,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+
+        scanned_files += 1;
+
+        let modified_days = age.as_secs() / 86400;
+
+        if modified_days >= MIN_AGE_DAYS {
+            let size = metadata.len();
+
+            total_candidate_bytes =
+                total_candidate_bytes.saturating_add(size);
+
+            candidates.push(JunkFileCandidate {
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: entry.path().to_string_lossy().to_string(),
+                size_bytes: size,
+                modified_days,
+            });
+        }
+    }
+
+    let candidate_files = candidates.len();
+
+    JunkScanReport {
+        success: true,
+        scanned_files,
+        candidate_files,
+        skipped_files,
+        total_candidate_bytes,
+        candidates,
+        details: format!(
+            "Inspected the current user's temporary folder. \
+            Files older than {MIN_AGE_DAYS} days are listed as potential cleanup candidates. \
+            No files were deleted or modified."
+        ),
     }
 }
 
@@ -723,7 +860,8 @@ pub fn run() {
             check_antivirus_status,
             check_real_time_protection,
             scan_selected_path,
-            audit_privacy_permissions
+            audit_privacy_permissions,
+            scan_junk_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

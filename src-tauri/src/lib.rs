@@ -29,6 +29,20 @@ struct RealTimeProtectionStatus {
 }
 
 #[derive(Serialize)]
+struct PrivacyPermission {
+    category: String,
+    application: String,
+    access: String,
+}
+
+#[derive(Serialize)]
+struct PrivacyAuditStatus {
+    success: bool,
+    permissions: Vec<PrivacyPermission>,
+    details: String,
+}
+
+#[derive(Serialize)]
 struct FileScanResult {
     name: String,
     path: String,
@@ -217,6 +231,143 @@ fn check_real_time_protection() -> RealTimeProtectionStatus {
         },
     }
 }
+
+#[tauri::command]
+fn audit_privacy_permissions() -> PrivacyAuditStatus {
+    let script = r#"
+        $ErrorActionPreference = 'Stop'
+
+        $categories = @(
+            @{
+                Name = 'Camera'
+                Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam'
+            },
+            @{
+                Name = 'Microphone'
+                Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+            },
+            @{
+                Name = 'Location'
+                Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
+            }
+        )
+
+        $items = @()
+
+        foreach ($category in $categories) {
+            if (Test-Path $category.Path) {
+
+                $root = Get-ItemProperty -Path $category.Path `
+                    -Name Value -ErrorAction SilentlyContinue
+
+                if ($null -ne $root.Value) {
+                    $items += [PSCustomObject]@{
+                        Category = $category.Name
+                        Application = 'Device-wide setting'
+                        Access = [string]$root.Value
+                    }
+                }
+
+                $keys = Get-ChildItem -Path $category.Path `
+                    -Recurse -ErrorAction SilentlyContinue
+
+                foreach ($key in $keys) {
+                    $permission = Get-ItemProperty `
+                        -Path $key.PSPath `
+                        -Name Value -ErrorAction SilentlyContinue
+
+                    if ($null -ne $permission.Value) {
+                        $application = $key.Name -replace '^.*\\', ''
+
+                        $items += [PSCustomObject]@{
+                            Category = $category.Name
+                            Application = $application
+                            Access = [string]$permission.Value
+                        }
+                    }
+                }
+            }
+        }
+
+        ConvertTo-Json -InputObject @($items) -Depth 4 -Compress
+    "#;
+
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            let json = String::from_utf8_lossy(&result.stdout)
+                .trim()
+                .to_string();
+
+            match serde_json::from_str::<serde_json::Value>(&json) {
+                Ok(data) => {
+                    let mut permissions = Vec::new();
+
+                    if let Some(items) = data.as_array() {
+                        for item in items {
+                            permissions.push(PrivacyPermission {
+                                category: item["Category"]
+                                    .as_str()
+                                    .unwrap_or("Unknown")
+                                    .to_string(),
+
+                                application: item["Application"]
+                                    .as_str()
+                                    .unwrap_or("Unknown")
+                                    .to_string(),
+
+                                access: item["Access"]
+                                    .as_str()
+                                    .unwrap_or("Unknown")
+                                    .to_string(),
+                            });
+                        }
+                    }
+
+                    PrivacyAuditStatus {
+                        success: true,
+                        permissions,
+                        details: "Windows privacy permission records were retrieved. These records may not include every installed application.".to_string(),
+                    }
+                }
+
+                Err(error) => PrivacyAuditStatus {
+                    success: false,
+                    permissions: Vec::new(),
+                    details: format!(
+                        "Could not parse privacy permission records: {error}"
+                    ),
+                },
+            }
+        }
+
+        Ok(result) => PrivacyAuditStatus {
+            success: false,
+            permissions: Vec::new(),
+            details: format!(
+                "Could not retrieve privacy permissions: {}",
+                String::from_utf8_lossy(&result.stderr).trim()
+            ),
+        },
+
+        Err(error) => PrivacyAuditStatus {
+            success: false,
+            permissions: Vec::new(),
+            details: format!(
+                "Could not run the privacy audit: {error}"
+            ),
+        },
+    }
+}
+
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -570,15 +721,10 @@ pub fn run() {
             greet,
             check_firewall_status,
             check_antivirus_status,
-            check_real_time_protection
+            check_real_time_protection,
+            scan_selected_path,
+            audit_privacy_permissions
         ])
-        .invoke_handler(tauri::generate_handler![
-    greet,
-    check_firewall_status,
-    check_antivirus_status,
-    check_real_time_protection,
-    scan_selected_path
-])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

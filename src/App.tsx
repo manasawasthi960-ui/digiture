@@ -54,6 +54,19 @@ type ScanReport = {
   details: string;
 };
 
+type PrivacyPermission = {
+  category: string;
+  application: string;
+  access: string;
+};
+
+type PrivacyAuditStatus = {
+  success: boolean;
+  permissions: PrivacyPermission[];
+  details: string;
+};
+
+
 function App() {
   const [checking, setChecking] = useState(false);
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
@@ -73,6 +86,9 @@ function App() {
   const [scanReport, setScanReport] = useState<ScanReport | null>(null);
   const [scanError, setScanError] = useState("");
   const [severityFilter, setSeverityFilter] = useState("All");
+  const [privacyAudit, setPrivacyAudit] = useState<PrivacyAuditStatus | null>(null);
+const [privacyAuditing, setPrivacyAuditing] = useState(false);
+const [privacyError, setPrivacyError] = useState("");
 
 const allFindings =
   scanReport?.results.filter(
@@ -213,6 +229,31 @@ async function startFileScan() {
     setScanError(String(err));
   } finally {
     setScanningFiles(false);
+  }
+}
+
+async function runPrivacyAudit() {
+  if (privacyAuditing) return;
+
+  setPrivacyAuditing(true);
+  setPrivacyError("");
+  setPrivacyAudit(null);
+
+  try {
+    const result = await invoke<PrivacyAuditStatus>(
+      "audit_privacy_permissions"
+    );
+
+    setPrivacyAudit(result);
+
+    if (!result.success) {
+      setPrivacyError(result.details || "Privacy audit failed.");
+    }
+  } catch (err) {
+    setPrivacyAudit(null);
+    setPrivacyError(String(err));
+  } finally {
+    setPrivacyAuditing(false);
   }
 }
 
@@ -774,6 +815,82 @@ async function startFileScan() {
     <span className="footer-dot" />
     Findings are heuristic indicators, not confirmed malware detections.
     Review each result before taking action.
+  </div>
+</section>
+
+{/* PRIVACY AUDITOR */}
+<section className="checks-panel" id="privacy-auditor">
+  <div className="panel-heading">
+    <div>
+      <h3>Privacy Auditor</h3>
+      <p>
+        Review Windows permission records for Camera, Microphone and Location.
+      </p>
+    </div>
+
+    <span className="check-count">READ-ONLY</span>
+  </div>
+
+  <div style={{ padding: "20px" }}>
+    <button
+      className="primary-button"
+      type="button"
+      onClick={runPrivacyAudit}
+      disabled={privacyAuditing}
+    >
+      {privacyAuditing ? "Auditing permissions..." : "Run Privacy Audit"}
+    </button>
+
+    {privacyError && (
+      <div className="notice error-notice" role="alert">
+        <div className="notice-body">
+          <strong>Privacy audit failed</strong>
+          <p>{privacyError}</p>
+        </div>
+      </div>
+    )}
+
+    {privacyAudit && (
+      <div style={{ marginTop: "24px" }}>
+        <h4>Permission Records</h4>
+
+        <p>
+          Records retrieved:{" "}
+          <strong>{privacyAudit.permissions.length}</strong>
+        </p>
+
+        <p>{privacyAudit.details}</p>
+
+        {privacyAudit.permissions.length > 0 ? (
+          privacyAudit.permissions.map((permission, index) => (
+            <article
+              className="check-row"
+              key={`${permission.category}-${permission.application}-${index}`}
+              style={{ alignItems: "flex-start" }}
+            >
+              <div className="check-info">
+                <strong>{permission.category}</strong>
+                <p>
+                  <strong>Application:</strong> {permission.application}
+                </p>
+                <p>
+                  <strong>Recorded access:</strong> {permission.access}
+                </p>
+              </div>
+            </article>
+          ))
+        ) : (
+          <p>No permission records were returned by Windows.</p>
+        )}
+      </div>
+    )}
+  </div>
+
+  <div className="panel-footer">
+    <span className="footer-dot" />
+    Read-only registry inspection. These records may not represent every
+    installed application or prove that an application is currently using a
+    permission.
   </div>
 </section>
 

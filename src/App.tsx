@@ -71,6 +71,7 @@ type JunkFileCandidate = {
   path: string;
   size_bytes: number;
   modified_days: number;
+   modified_unix_secs: number;
 };
 
 type JunkScanReport = {
@@ -108,7 +109,24 @@ const [privacyError, setPrivacyError] = useState("");
 const [junkReport, setJunkReport] = useState<JunkScanReport | null>(null);
 const [junkScanning, setJunkScanning] = useState(false);
 const [junkError, setJunkError] = useState("");
+const [junkVerification, setJunkVerification] =
+  useState<JunkVerificationReport | null>(null);
 
+const [junkVerifying, setJunkVerifying] = useState(false);
+
+const [junkVerificationError, setJunkVerificationError] = useState("");
+const [selectedJunkFiles, setSelectedJunkFiles] = useState<string[]>([]);
+const [showCleanupReview, setShowCleanupReview] = useState(false);
+
+const selectedJunkCandidates =
+  junkReport?.candidates.filter((file) =>
+    selectedJunkFiles.includes(file.path)
+  ) ?? [];
+
+const selectedJunkBytes = selectedJunkCandidates.reduce(
+  (total, file) => total + file.size_bytes,
+  0
+);
 
 const allFindings =
   scanReport?.results.filter(
@@ -283,6 +301,7 @@ async function runJunkScan() {
   setJunkScanning(true);
   setJunkError("");
   setJunkReport(null);
+  setSelectedJunkFiles([]);
 
   try {
     const result = await invoke<JunkScanReport>("scan_junk_files");
@@ -298,6 +317,62 @@ async function runJunkScan() {
   } finally {
     setJunkScanning(false);
   }
+}
+
+async function verifySelectedJunkFiles() {
+  if (junkVerifying || selectedJunkCandidates.length === 0) return;
+
+  setJunkVerifying(true);
+  setJunkVerificationError("");
+  setJunkVerification(null);
+
+  try {
+    const result = await invoke<JunkVerificationReport>(
+      "verify_junk_files",
+      {
+        candidates: selectedJunkCandidates,
+      }
+    );
+
+    setJunkVerification(result);
+
+    if (!result.success) {
+      setJunkVerificationError(
+        result.details || "File verification failed."
+      );
+    }
+  } catch (err) {
+    setJunkVerification(null);
+    setJunkVerificationError(String(err));
+  } finally {
+    setJunkVerifying(false);
+  }
+}
+
+function toggleJunkFileSelection(path: string) {
+  setSelectedJunkFiles((previous) =>
+    previous.includes(path)
+      ? previous.filter((item) => item !== path)
+      : [...previous, path]
+  );
+}
+
+function selectAllJunkFiles() {
+  setSelectedJunkFiles(
+    junkReport?.candidates.map((file) => file.path) ?? []
+  );
+}
+
+function clearJunkFileSelection() {
+  setSelectedJunkFiles([]);
+}
+
+function openCleanupReview() {
+  if (selectedJunkCandidates.length === 0) {
+    return;
+  }
+
+  setShowCleanupReview(true);
 }
 
   function getAntivirusProducts(): AntivirusProduct[] {
@@ -964,23 +1039,175 @@ async function runJunkScan() {
   {junkReport && (
     <>
       <div>
-        <p>Files inspected: {junkReport.scanned_files}</p>
-        <p>Potential candidates: {junkReport.candidate_files}</p>
-        <p>Skipped entries: {junkReport.skipped_files}</p>
-        <p>
-          Potential storage:
-          {" "}
-          {(junkReport.total_candidate_bytes / (1024 * 1024)).toFixed(2)}
-          {" MB"}
-        </p>
+        <div className="junk-summary-grid">
+  <div className="junk-stat-card">
+    <span>Files Inspected</span>
+    <h3>{junkReport.scanned_files}</h3>
+  </div>
+
+  <div className="junk-stat-card">
+    <span>Potential Candidates</span>
+    <h3>{junkReport.candidate_files}</h3>
+  </div>
+
+  <div className="junk-stat-card">
+    <span>Skipped Entries</span>
+    <h3>{junkReport.skipped_files}</h3>
+  </div>
+
+  <div className="junk-stat-card">
+    <span>Potential Storage</span>
+    <h3>
+      {(junkReport.total_candidate_bytes / (1024 * 1024)).toFixed(2)} MB
+    </h3>
+  </div>
+</div>
       </div>
 
+      <div className="junk-selection-summary">
+
+        <div className="junk-selection-actions">
+  <button
+    onClick={selectAllJunkFiles}
+    disabled={!junkReport || junkReport.candidates.length === 0}
+  >
+    Select All
+  </button>
+
+  <button
+    onClick={clearJunkFileSelection}
+    disabled={selectedJunkFiles.length === 0}
+  >
+    Clear Selection
+  </button>
+
+  <button
+  onClick={openCleanupReview}
+  disabled={selectedJunkFiles.length === 0}
+>
+  Review Selected Files ({selectedJunkFiles.length})
+</button>
+</div>
+
+
+  <div>
+    <span>Selected Files</span>
+    <h3>{selectedJunkCandidates.length}</h3>
+  </div>
+
+  <div>
+    <span>Selected Storage</span>
+    <h3>
+      {(selectedJunkBytes / (1024 * 1024)).toFixed(2)} MB
+    </h3>
+  </div>
+</div>
+
       <p>{junkReport.details}</p>
+
+      {showCleanupReview && (
+  <div className="junk-review-panel">
+    <h3>Cleanup Review</h3>
+
+    <p>
+      Review the files you selected before taking any action.
+    </p>
+
+    <div className="junk-review-summary">
+      <p>
+        Selected Files: {selectedJunkCandidates.length}
+      </p>
+
+      <p>
+        Selected Storage:
+        {" "}
+        {(selectedJunkBytes / (1024 * 1024)).toFixed(2)} MB
+      </p>
+    </div>
+
+    {selectedJunkCandidates.map((file) => (
+      <div key={file.path} className="junk-review-file">
+        <h4>{file.name}</h4>
+        <p>{file.path}</p>
+        <p>
+          Size: {(file.size_bytes / 1024).toFixed(2)} KB
+        </p>
+      </div>
+    ))}
+
+    <p>
+      ⚠️ No files have been deleted. This is a review-only screen.
+    </p>
+
+    <button
+  className="primary-button"
+  onClick={verifySelectedJunkFiles}
+  disabled={junkVerifying || selectedJunkCandidates.length === 0}
+>
+  {junkVerifying ? "Verifying Files..." : "Verify Selected Files"}
+</button>
+
+{junkVerificationError && (
+  <div className="error-message">
+    {junkVerificationError}
+  </div>
+)}
+
+{junkVerification && (
+  <div className="junk-verification-results">
+    <h3>File Verification Results</h3>
+
+    <p>{junkVerification.details}</p>
+
+    <div className="junk-review-summary">
+      <div>
+        <strong>{junkVerification.verified_files}</strong>
+        <span>Verified Files</span>
+      </div>
+
+      <div>
+        <strong>{junkVerification.rejected_files}</strong>
+        <span>Rejected Files</span>
+      </div>
+    </div>
+
+    {junkVerification.results.map((file) => (
+      <div
+        key={file.path}
+        className="junk-review-file"
+      >
+        <strong>{file.name}</strong>
+
+        <p>
+          Status: {file.verified ? "Verified" : "Rejected"}
+        </p>
+
+        <p>{file.details}</p>
+      </div>
+    ))}
+  </div>
+)}
+
+    <button onClick={() => setShowCleanupReview(false)}>
+      Back to Scanner
+    </button>
+  </div>
+)}
 
       {junkReport.candidates.length > 0 ? (
         <div>
           {junkReport.candidates.map((file, index) => (
-            <div key={`${file.path}-${index}`}>
+            <div key={`${file.path}-${index}`}
+             className="junk-file-card"
+             >
+              <label className="junk-file-select">
+  <input
+    type="checkbox"
+    checked={selectedJunkFiles.includes(file.path)}
+    onChange={() => toggleJunkFileSelection(file.path)}
+  />
+  Select this file
+</label>
               <h3>{file.name}</h3>
               <p>{file.path}</p>
               <p>Last modified: {file.modified_days} days ago</p>

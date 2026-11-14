@@ -2,10 +2,10 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, BufReader};
 use std::path::{Path, PathBuf};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct FirewallStatus {
     success: bool,
     profiles: String,
@@ -42,12 +42,14 @@ struct PrivacyAuditStatus {
     details: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct JunkFileCandidate {
     name: String,
     path: String,
     size_bytes: u64,
     modified_days: u64,
+    modified_unix_secs: u64,
+     sha256: String,
 }
 
 #[derive(Serialize)]
@@ -60,6 +62,25 @@ struct JunkScanReport {
     candidates: Vec<JunkFileCandidate>,
     details: String,
 }
+
+#[derive(Serialize)]
+struct JunkFileVerification {
+    name: String,
+    path: String,
+    verified: bool,
+    details: String,
+}
+
+#[derive(Serialize)]
+struct JunkVerificationReport {
+    success: bool,
+    verified_files: usize,
+    rejected_files: usize,
+    results: Vec<JunkFileVerification>,
+    details: String,
+}
+
+
 
 #[derive(Serialize)]
 struct FileScanResult {
@@ -476,17 +497,62 @@ fn scan_junk_files() -> JunkScanReport {
         if modified_days >= MIN_AGE_DAYS {
             let size = metadata.len();
 
-            total_candidate_bytes =
-                total_candidate_bytes.saturating_add(size);
+            let modified_unix_secs = modified
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_secs();
 
-            candidates.push(JunkFileCandidate {
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: entry.path().to_string_lossy().to_string(),
-                size_bytes: size,
-                modified_days,
-            });
+// Open the candidate file for fingerprinting.
+let mut file = match File::open(entry.path()) {
+    Ok(file) => file,
+    Err(_) => {
+        skipped_files += 1;
+        continue;
+    }
+};
+
+// Calculate SHA-256 in chunks.
+let mut hasher = Sha256::new();
+let mut buffer = [0u8; 8192];
+let mut read_failed = false;
+
+loop {
+    match file.read(&mut buffer) {
+        Ok(0) => break,
+        Ok(bytes_read) => {
+            hasher.update(&buffer[..bytes_read]);
+        }
+        Err(_) => {
+            read_failed = true;
+            break;
         }
     }
+}
+
+if read_failed {
+    skipped_files += 1;
+    continue;
+}
+
+let sha256 = hasher
+    .finalize()
+    .iter()
+    .map(|byte| format!("{:02x}", byte))
+    .collect::<String>();
+
+total_candidate_bytes =
+    total_candidate_bytes.saturating_add(size);
+
+candidates.push(JunkFileCandidate {
+    name: entry.file_name().to_string_lossy().to_string(),
+    path: entry.path().to_string_lossy().to_string(),
+    size_bytes: size,
+    sha256,
+    modified_days,
+    modified_unix_secs,
+});
+    }
+}
 
     let candidate_files = candidates.len();
 
@@ -502,6 +568,160 @@ fn scan_junk_files() -> JunkScanReport {
             Files older than {MIN_AGE_DAYS} days are listed as potential cleanup candidates. \
             No files were deleted or modified."
         ),
+    }
+}
+
+#[tauri::command]
+fn verify_junk_files(
+    candidates: Vec<JunkFileCandidate>,
+) -> JunkVerificationReport {
+    const MIN_AGE_DAYS: u64 = 7;
+
+    let temp_path = match fs::canonicalize(std::env::temp_dir()) {
+        Ok(path) => path,
+        Err(error) => {
+            return JunkVerificationReport {
+                success: false,
+                verified_files: 0,
+                rejected_files: candidates.len(),
+                results: Vec::new(),
+                details: format!("Could not verify temporary folder: {error}"),
+            };
+        }
+    };
+
+    let mut results = Vec::new();
+    let mut verified_files = 0;
+    let mut rejected_files = 0;
+
+    for candidate in candidates {
+        let reject = |details: String| JunkFileVerification {
+            name: candidate.name.clone(),
+            path: candidate.path.clone(),
+            verified: false,
+            details,
+        };
+
+        let metadata = match fs::symlink_metadata(&candidate.path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                rejected_files += 1;
+                results.push(reject("File is missing or inaccessible.".into()));
+                continue;
+            }
+        };
+
+        if !metadata.file_type().is_file() {
+            rejected_files += 1;
+            results.push(reject("Not a regular file or is a symbolic link.".into()));
+            continue;
+        }
+
+        let canonical_file = match fs::canonicalize(&candidate.path) {
+            Ok(path) => path,
+            Err(_) => {
+                rejected_files += 1;
+                results.push(reject("Could not resolve file path.".into()));
+                continue;
+            }
+        };
+
+        if canonical_file.parent() != Some(temp_path.as_path()) {
+            rejected_files += 1;
+            results.push(reject("File is outside the permitted temporary folder.".into()));
+            continue;
+        }
+
+        let modified = match metadata.modified() {
+            Ok(time) => time,
+            Err(_) => {
+                rejected_files += 1;
+                results.push(reject("Could not read modification time.".into()));
+                continue;
+            }
+        };
+
+        let modified_unix_secs = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let age = std::time::SystemTime::now()
+            .duration_since(modified);
+
+        let old_enough = age
+            .map(|duration| duration.as_secs() >= MIN_AGE_DAYS * 86400)
+            .unwrap_or(false);
+
+        if metadata.len() != candidate.size_bytes
+            || modified_unix_secs != candidate.modified_unix_secs
+            || !old_enough
+        {
+            rejected_files += 1;
+            results.push(reject(
+                "File changed since scanning or is no longer old enough.".into(),
+            ));
+            continue;
+        }
+
+        let mut file = match File::open(&candidate.path) {
+    Ok(file) => file,
+    Err(_) => {
+        rejected_files += 1;
+        results.push(reject("Could not open file for fingerprint verification.".into()));
+        continue;
+    }
+};
+
+let mut hasher = Sha256::new();
+let mut buffer = [0u8; 8192];
+let mut read_failed = false;
+
+loop {
+    match file.read(&mut buffer) {
+        Ok(0) => break,
+        Ok(bytes_read) => hasher.update(&buffer[..bytes_read]),
+        Err(_) => {
+            read_failed = true;
+            break;
+        }
+    }
+}
+
+if read_failed {
+    rejected_files += 1;
+    results.push(reject("Could not read file contents.".into()));
+    continue;
+}
+
+let current_sha256 = hasher
+    .finalize()
+    .iter()
+    .map(|byte| format!("{:02x}", byte))
+    .collect::<String>();
+
+if current_sha256 != candidate.sha256 {
+    rejected_files += 1;
+    results.push(reject("File content changed since the original scan.".into()));
+    continue;
+}
+
+        verified_files += 1;
+
+        results.push(JunkFileVerification {
+            name: candidate.name,
+            path: candidate.path,
+            verified: true,
+            details: "File metadata and SHA-256 fingerprint match the original scan.".into(),
+        });
+    }
+
+    JunkVerificationReport {
+        success: true,
+        verified_files,
+        rejected_files,
+        results,
+        details: "Verification completed. No files were deleted or modified.".into(),
     }
 }
 
@@ -688,42 +908,41 @@ if misleading_executable {
     };
 
     // Calculate SHA-256
-    let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
+let mut reader = BufReader::new(file);
+let mut hasher = Sha256::new();
+let mut buffer = [0u8; 8192];
 
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
+loop {
+    match reader.read(&mut buffer) {
+        Ok(0) => break,
+        Ok(bytes_read) => {
+            hasher.update(&buffer[..bytes_read]);
+        }
+        Err(_) => {
+            findings.push(
+                "An error occurred while reading the file.".to_string(),
+            );
 
-            Ok(bytes_read) => {
-                hasher.update(&buffer[..bytes_read]);
-            }
-
-            Err(_) => {
-                findings.push(
-                    "An error occurred while reading the file.".to_string(),
-                );
-
-                return FileScanResult {
-                    name,
-                    path: path.to_string_lossy().to_string(),
-                    extension,
-                    size,
-                    sha256: None,
-                    status: "Could not scan".to_string(),
-                    severity: "Unknown".to_string(),
-                    findings,
-                };
-            }
+            return FileScanResult {
+                name,
+                path: path.to_string_lossy().to_string(),
+                extension,
+                size,
+                sha256: None,
+                status: "Could not scan".to_string(),
+                severity: "Unknown".to_string(),
+                findings,
+            };
         }
     }
+}
 
-    let hash = hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{:02x}", byte))
-        .collect::<String>();
+let hash = hasher
+    .finalize()
+    .iter()
+    .map(|byte| format!("{:02x}", byte))
+    .collect::<String>();
+
 
     // Calculate severity
     let severity = classify_severity(
@@ -861,7 +1080,8 @@ pub fn run() {
             check_real_time_protection,
             scan_selected_path,
             audit_privacy_permissions,
-            scan_junk_files
+            scan_junk_files,
+            verify_junk_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

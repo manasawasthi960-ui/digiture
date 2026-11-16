@@ -80,6 +80,23 @@ struct JunkVerificationReport {
     details: String,
 }
 
+#[derive(Serialize)]
+struct JunkCleanupFileResult {
+    name: String,
+    path: String,
+    moved_to_recycle_bin: bool,
+    details: String,
+}
+
+#[derive(Serialize)]
+struct JunkCleanupReport {
+    success: bool,
+    moved_files: usize,
+    failed_files: usize,
+    results: Vec<JunkCleanupFileResult>,
+    details: String,
+}
+
 
 
 #[derive(Serialize)]
@@ -726,6 +743,191 @@ if current_sha256 != candidate.sha256 {
 }
 
 
+fn move_file_to_recycle_bin(path: String) -> Result<(), String> {
+    let operation = std::thread::spawn(move || {
+        trash::delete(path)
+    });
+
+    match operation.join() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(format!(
+            "Could not move file to Recycle Bin: {error}"
+        )),
+        Err(_) => Err(
+            "Recycle Bin operation encountered an internal error.".into()
+        ),
+    }
+}
+
+fn validate_junk_candidate(
+    candidate: &JunkFileCandidate,
+    temp_path: &Path,
+) -> Result<(), String> {
+    const MIN_AGE_DAYS: u64 = 7;
+
+    let metadata = fs::symlink_metadata(&candidate.path)
+        .map_err(|_| "File is missing or inaccessible.".to_string())?;
+
+    if !metadata.file_type().is_file() {
+        return Err("File is not a regular file or is a symbolic link.".into());
+    }
+
+    let canonical_file = fs::canonicalize(&candidate.path)
+        .map_err(|_| "Could not resolve file path.".to_string())?;
+
+    if canonical_file.parent() != Some(temp_path) {
+        return Err("File is outside the permitted temporary folder.".into());
+    }
+
+    let modified = metadata.modified()
+        .map_err(|_| "Could not read modification time.".to_string())?;
+
+    let modified_unix_secs = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let age = std::time::SystemTime::now()
+        .duration_since(modified)
+        .map_err(|_| "File modification time is in the future.".to_string())?;
+
+    if metadata.len() != candidate.size_bytes
+        || modified_unix_secs != candidate.modified_unix_secs
+        || age.as_secs() < MIN_AGE_DAYS * 86400
+    {
+        return Err("File changed or is no longer at least 7 days old.".into());
+    }
+
+    let mut file = File::open(&candidate.path)
+        .map_err(|_| "Could not open file for verification.".to_string())?;
+
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let bytes_read = file.read(&mut buffer)
+            .map_err(|_| "Could not read file contents.".to_string())?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        hasher.update(&buffer[..bytes_read]);
+    }
+
+    let current_sha256 = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+
+    if current_sha256 != candidate.sha256 {
+        return Err("File content changed since the original scan.".into());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn cleanup_junk_files(
+    candidates: Vec<JunkFileCandidate>,
+    confirmed: bool,
+) -> JunkCleanupReport {
+    const MAX_CLEANUP_FILES: usize = 1000;
+
+    let mut report = JunkCleanupReport {
+        success: false,
+        moved_files: 0,
+        failed_files: 0,
+        results: Vec::new(),
+        details: String::new(),
+    };
+
+    if !confirmed {
+        report.failed_files = candidates.len();
+        report.details = "Cleanup cancelled: explicit confirmation was not provided.".into();
+        return report;
+    }
+
+    if candidates.is_empty() || candidates.len() > MAX_CLEANUP_FILES {
+        report.failed_files = candidates.len();
+        report.details = "Invalid cleanup selection.".into();
+        return report;
+    }
+
+    let temp_path = match fs::canonicalize(std::env::temp_dir()) {
+        Ok(path) => path,
+        Err(error) => {
+            report.failed_files = candidates.len();
+            report.details = format!("Could not access temporary folder: {error}");
+            return report;
+        }
+    };
+
+    for candidate in candidates {
+        let name = candidate.name.clone();
+        let path = candidate.path.clone();
+
+        if let Err(error) = validate_junk_candidate(&candidate, &temp_path) {
+            report.failed_files += 1;
+
+            report.results.push(JunkCleanupFileResult {
+                name,
+                path,
+                moved_to_recycle_bin: false,
+                details: format!("Final verification failed: {error}"),
+            });
+
+            continue;
+        }
+
+        match move_file_to_recycle_bin(candidate.path.clone()) {
+            Ok(()) => {
+                if Path::new(&candidate.path).exists() {
+                    report.failed_files += 1;
+
+                    report.results.push(JunkCleanupFileResult {
+                        name,
+                        path,
+                        moved_to_recycle_bin: false,
+                        details: "Recycle Bin operation returned, but the original file still exists.".into(),
+                    });
+                } else {
+                    report.moved_files += 1;
+
+                    report.results.push(JunkCleanupFileResult {
+                        name,
+                        path,
+                        moved_to_recycle_bin: true,
+           details: "Windows Recycle Bin operation completed successfully. The original file no longer exists at its previous location.".into(),         });
+                }
+            }
+
+            Err(error) => {
+                report.failed_files += 1;
+
+                report.results.push(JunkCleanupFileResult {
+                    name,
+                    path,
+                    moved_to_recycle_bin: false,
+                    details: error,
+                });
+            }
+        }
+    }
+
+    report.success = report.failed_files == 0 && report.moved_files > 0;
+
+    report.details = format!(
+        "Cleanup finished: {} file(s) moved to the Recycle Bin; {} file(s) failed.",
+        report.moved_files,
+        report.failed_files
+    );
+
+    report
+}
+
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -1081,7 +1283,8 @@ pub fn run() {
             scan_selected_path,
             audit_privacy_permissions,
             scan_junk_files,
-            verify_junk_files
+            verify_junk_files,
+             cleanup_junk_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

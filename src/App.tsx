@@ -72,6 +72,7 @@ type JunkFileCandidate = {
   size_bytes: number;
   modified_days: number;
    modified_unix_secs: number;
+   sha256: string;
 };
 
 type JunkScanReport = {
@@ -81,6 +82,36 @@ type JunkScanReport = {
   skipped_files: number;
   total_candidate_bytes: number;
   candidates: JunkFileCandidate[];
+  details: string;
+};
+
+type JunkFileVerification = {
+  name: string;
+  path: string;
+  verified: boolean;
+  details: string;
+};
+
+type JunkVerificationReport = {
+  success: boolean;
+  verified_files: number;
+  rejected_files: number;
+  results: JunkFileVerification[];
+  details: string;
+};
+
+type JunkCleanupFileResult = {
+  name: string;
+  path: string;
+  moved_to_recycle_bin: boolean;
+  details: string;
+};
+
+type JunkCleanupReport = {
+  success: boolean;
+  moved_files: number;
+  failed_files: number;
+  results: JunkCleanupFileResult[];
   details: string;
 };
 
@@ -111,6 +142,10 @@ const [junkScanning, setJunkScanning] = useState(false);
 const [junkError, setJunkError] = useState("");
 const [junkVerification, setJunkVerification] =
   useState<JunkVerificationReport | null>(null);
+  const [junkCleanup, setJunkCleanup] = useState<JunkCleanupReport | null>(null);
+const [junkCleaning, setJunkCleaning] = useState(false);
+const [junkCleanupError, setJunkCleanupError] = useState("");
+const [showFinalCleanupConfirmation, setShowFinalCleanupConfirmation] = useState(false);
 
 const [junkVerifying, setJunkVerifying] = useState(false);
 
@@ -346,6 +381,60 @@ async function verifySelectedJunkFiles() {
     setJunkVerificationError(String(err));
   } finally {
     setJunkVerifying(false);
+  }
+}
+
+async function runJunkCleanup() {
+  if (junkCleaning || selectedJunkCandidates.length === 0) return;
+
+  const selectedPaths = selectedJunkCandidates
+    .map((file) => file.path)
+    .sort();
+
+  const verifiedPaths =
+    junkVerification?.results
+      .filter((result) => result.verified)
+      .map((result) => result.path)
+      .sort() ?? [];
+
+  const allVerified =
+    junkVerification !== null &&
+    junkVerification.rejected_files === 0 &&
+    junkVerification.verified_files === selectedJunkCandidates.length &&
+    JSON.stringify(selectedPaths) === JSON.stringify(verifiedPaths);
+
+  if (!allVerified) {
+    setJunkCleanupError(
+      "Please verify all currently selected files before cleanup."
+    );
+    return;
+  }
+
+  setJunkCleaning(true);
+  setJunkCleanupError("");
+  setJunkCleanup(null);
+
+  try {
+    const result = await invoke<JunkCleanupReport>(
+      "cleanup_junk_files",
+      {
+        candidates: selectedJunkCandidates,
+        confirmed: true,
+      }
+    );
+
+    setJunkCleanup(result);
+    setShowFinalCleanupConfirmation(false);
+
+    if (!result.success) {
+      setJunkCleanupError(
+        result.details || "Some files could not be moved."
+      );
+    }
+  } catch (err) {
+    setJunkCleanupError(String(err));
+  } finally {
+    setJunkCleaning(false);
   }
 }
 
@@ -1183,7 +1272,110 @@ function openCleanupReview() {
         </p>
 
         <p>{file.details}</p>
+
+        {junkVerification.verified_files === selectedJunkCandidates.length &&
+  junkVerification.rejected_files === 0 &&
+  selectedJunkCandidates.length > 0 && (
+    <div className="cleanup-confirmation">
+      <h3>Ready for Cleanup</h3>
+
+      <p>
+        All {selectedJunkCandidates.length} selected files have passed
+        verification.
+      </p>
+
+      <button
+        onClick={() => {
+          setJunkCleanupError("");
+          setJunkCleanup(null);
+          setShowFinalCleanupConfirmation(true);
+        }}
+      >
+        Review Recycle Bin Action
+      </button>
+    </div>
+  )}
+
+{showFinalCleanupConfirmation && (
+  <div className="cleanup-confirmation">
+    <h3>Confirm Cleanup</h3>
+
+    <p>
+      You are about to move {selectedJunkCandidates.length} files to the
+      Windows Recycle Bin.
+    </p>
+
+    <p>
+      This is not a permanent deletion. No automatic permanent-delete
+      fallback will be used.
+    </p>
+
+    <p>Please review carefully before proceeding.</p>
+
+    <button
+      onClick={() => setShowFinalCleanupConfirmation(false)}
+      disabled={junkCleaning}
+    >
+      Cancel
+    </button>
+
+    <button
+      onClick={runJunkCleanup}
+      disabled={junkCleaning}
+    >
+      {junkCleaning ? "Moving Files..." : "Confirm & Move to Recycle Bin"}
+    </button>
+  </div>
+)}
+
+{junkCleanupError && (
+  <p className="error-message">{junkCleanupError}</p>
+)}
+
+{junkCleanup && (
+  <div className="cleanup-results">
+    <h3>Cleanup Results</h3>
+
+    <p>{junkCleanup.details}</p>
+
+    <div>
+      <strong>Moved to Recycle Bin:</strong>{" "}
+      {junkCleanup.moved_files}
+    </div>
+
+    <div>
+      <strong>Failed:</strong>{" "}
+      {junkCleanup.failed_files}
+    </div>
+
+    {junkCleanup.results.map((result, index) => (
+      <div key={`${result.path}-${index}`}>
+        <strong>{result.name}</strong>
+
+        <p>
+          Status:{" "}
+          {result.moved_to_recycle_bin
+            ? "Moved to Recycle Bin"
+            : "Not moved"}
+        </p>
+
+        <p>{result.details}</p>
       </div>
+    ))}
+
+    <button
+      onClick={runJunkScan}
+      disabled={junkScanning || junkCleaning}
+    >
+      Rescan Temporary Files
+    </button>
+  </div>
+)}
+
+
+      </div>
+
+
     ))}
   </div>
 )}

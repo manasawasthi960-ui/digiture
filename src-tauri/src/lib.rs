@@ -43,6 +43,206 @@ struct PrivacyAuditStatus {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all(deserialize = "PascalCase"))]
+struct NetworkAdapterInfo {
+    name: String,
+    description: String,
+    status: String,
+    #[serde(rename(deserialize = "IPv4Addresses"))]
+ipv4_addresses: Vec<String>,
+    #[serde(rename(deserialize = "MacAddress"))]
+    mac_address: String,
+    #[serde(rename(deserialize = "InterfaceType"))]
+    interface_type: String,
+    #[serde(rename(deserialize = "DefaultGateways"))]
+    default_gateways: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct NetworkAuditReport {
+    success: bool,
+    adapters: Vec<NetworkAdapterInfo>,
+    details: String,
+}#[derive(Serialize, Deserialize)]
+#[serde(rename_all(deserialize = "PascalCase"))]
+struct ActiveConnectionInfo {
+    local_address: String,
+    local_port: u16,
+    remote_address: String,
+    remote_port: u16,
+    state: String,
+    owning_process_id: u32,
+    process_name: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ActiveConnectionsReport {
+    success: bool,
+    connections: Vec<ActiveConnectionInfo>,
+    details: String,
+}
+
+
+
+#[tauri::command]
+fn inspect_network_adapters() -> NetworkAuditReport {
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+
+$items = @(
+    Get-NetAdapter -ErrorAction Stop | ForEach-Object {
+        $adapter = $_
+        $config = Get-NetIPConfiguration `
+            -InterfaceIndex $adapter.ifIndex `
+            -ErrorAction SilentlyContinue
+
+        $ipv4 = @()
+        $gateways = @()
+
+        if ($null -ne $config) {
+            $ipv4 = @(
+                $config.IPv4Address |
+                Where-Object { $null -ne $_ } |
+                ForEach-Object { [string]$_.IPAddress }
+            )
+
+            $gateways = @(
+                $config.IPv4DefaultGateway |
+                Where-Object { $null -ne $_ } |
+                ForEach-Object { [string]$_.NextHop }
+            )
+        }
+
+        [PSCustomObject]@{
+            Name = [string]$adapter.Name
+            Description = [string]$adapter.InterfaceDescription
+            Status = [string]$adapter.Status
+            IPv4Addresses = @($ipv4)
+            MacAddress = [string]$adapter.MacAddress
+            InterfaceType = [string]$adapter.PhysicalMediaType
+            DefaultGateways = @($gateways)
+        }
+    }
+)
+
+ConvertTo-Json -InputObject $items -Depth 5 -Compress
+"#;
+
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let json = String::from_utf8_lossy(&output.stdout);
+
+            match serde_json::from_str::<Vec<NetworkAdapterInfo>>(&json) {
+                Ok(adapters) => NetworkAuditReport {
+                    success: true,
+                    adapters,
+                    details: "Network adapters inspected successfully.".into(),
+                },
+                Err(error) => NetworkAuditReport {
+                    success: false,
+                    adapters: Vec::new(),
+                    details: format!("Could not parse adapter information: {error}"),
+                },
+            }
+        }
+
+        Ok(output) => NetworkAuditReport {
+            success: false,
+            adapters: Vec::new(),
+            details: format!(
+                "Network inspection failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        },
+
+        Err(error) => NetworkAuditReport {
+            success: false,
+            adapters: Vec::new(),
+            details: format!("Could not start PowerShell: {error}"),
+        },
+    }
+}
+
+#[tauri::command]
+fn inspect_active_connections() -> ActiveConnectionsReport {
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+
+$items = @(
+    Get-NetTCPConnection -ErrorAction Stop |
+    ForEach-Object {
+        $connection = $_
+
+        $processName = $null
+
+        try {
+            $processName = (
+                Get-Process -Id $connection.OwningProcess -ErrorAction Stop
+            ).ProcessName
+        }
+        catch {
+            $processName = $null
+        }
+
+        [PSCustomObject]@{
+            LocalAddress = [string]$connection.LocalAddress
+            LocalPort = [uint16]$connection.LocalPort
+            RemoteAddress = [string]$connection.RemoteAddress
+            RemotePort = [uint16]$connection.RemotePort
+            State = [string]$connection.State
+            OwningProcessId = [uint32]$connection.OwningProcess
+            ProcessName = $processName
+        }
+    }
+)
+
+ConvertTo-Json -InputObject $items -Depth 5 -Compress
+"#;
+
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let json = String::from_utf8_lossy(&output.stdout);
+
+            match serde_json::from_str::<Vec<ActiveConnectionInfo>>(&json) {
+                Ok(connections) => ActiveConnectionsReport {
+                    success: true,
+                    connections,
+                    details: "Active TCP connections inspected successfully.".into(),
+                },
+                Err(error) => ActiveConnectionsReport {
+                    success: false,
+                    connections: Vec::new(),
+                    details: format!("Could not parse connection information: {error}"),
+                },
+            }
+        }
+
+        Ok(output) => ActiveConnectionsReport {
+            success: false,
+            connections: Vec::new(),
+            details: format!(
+                "Connection inspection failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        },
+
+        Err(error) => ActiveConnectionsReport {
+            success: false,
+            connections: Vec::new(),
+            details: format!("Could not start PowerShell: {error}"),
+        },
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct JunkFileCandidate {
     name: String,
     path: String,
@@ -1278,13 +1478,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             check_firewall_status,
-            check_antivirus_status,
-            check_real_time_protection,
-            scan_selected_path,
-            audit_privacy_permissions,
-            scan_junk_files,
-            verify_junk_files,
-             cleanup_junk_files
+    check_antivirus_status,
+    check_real_time_protection,
+    scan_selected_path,
+    audit_privacy_permissions,
+    inspect_network_adapters,
+    inspect_active_connections,
+    scan_junk_files,
+    verify_junk_files,
+    cleanup_junk_files    
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -115,6 +115,38 @@ type JunkCleanupReport = {
   details: string;
 };
 
+type NetworkAdapterInfo = {
+  name: string;
+  description: string;
+  status: string;
+  ipv4_addresses: string[];
+  mac_address: string;
+  interface_type: string;
+  default_gateways: string[];
+};
+
+type ActiveConnectionInfo = {
+  local_address: string;
+  local_port: number;
+  remote_address: string;
+  remote_port: number;
+  state: string;
+  owning_process_id: number;
+  process_name: string | null;
+};
+
+type ActiveConnectionsReport = {
+  success: boolean;
+  connections: ActiveConnectionInfo[];
+  details: string;
+};
+
+type NetworkAuditReport = {
+  success: boolean;
+  adapters: NetworkAdapterInfo[];
+  details: string;
+};
+
 function App() {
   const [checking, setChecking] = useState(false);
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
@@ -152,6 +184,19 @@ const [junkVerifying, setJunkVerifying] = useState(false);
 const [junkVerificationError, setJunkVerificationError] = useState("");
 const [selectedJunkFiles, setSelectedJunkFiles] = useState<string[]>([]);
 const [showCleanupReview, setShowCleanupReview] = useState(false);
+const [networkReport, setNetworkReport] =
+  useState<NetworkAuditReport | null>(null);
+  const [connectionsReport, setConnectionsReport] =
+  useState<ActiveConnectionsReport | null>(null);
+
+const [connectionsScanning, setConnectionsScanning] = useState(false);
+
+const [connectionsError, setConnectionsError] = useState("");
+
+const [networkScanning, setNetworkScanning] = useState(false);
+
+const [networkError, setNetworkError] = useState("");
+
 
 const selectedJunkCandidates =
   junkReport?.candidates.filter((file) =>
@@ -438,6 +483,59 @@ async function runJunkCleanup() {
   }
 }
 
+async function runNetworkInspection() {
+  if (networkScanning) return;
+
+  setNetworkScanning(true);
+  setNetworkError("");
+  setNetworkReport(null);
+
+  try {
+    const result = await invoke<NetworkAuditReport>(
+      "inspect_network_adapters"
+    );
+
+    setNetworkReport(result);
+
+    if (!result.success) {
+      setNetworkError(result.details || "Network inspection failed.");
+    }
+  } catch (error) {
+    setNetworkReport(null);
+    setNetworkError(String(error));
+  } finally {
+    setNetworkScanning(false);
+  }
+}
+
+async function runConnectionsInspection() {
+  if (connectionsScanning) return;
+
+  setConnectionsScanning(true);
+  setConnectionsError("");
+  setConnectionsReport(null);
+
+  try {
+    const result = await invoke<ActiveConnectionsReport>(
+      "inspect_active_connections"
+    );
+
+    setConnectionsReport(result);
+
+    if (!result.success) {
+      setConnectionsError(
+        result.details || "Connection inspection failed."
+      );
+    }
+  } catch (error) {
+    setConnectionsReport(null);
+    setConnectionsError(String(error));
+  } finally {
+    setConnectionsScanning(false);
+  }
+}
+
+
 function toggleJunkFileSelection(path: string) {
   setSelectedJunkFiles((previous) =>
     previous.includes(path)
@@ -563,12 +661,12 @@ function openCleanupReview() {
             <span>Overview</span>
           </button>
 
-          <button className="nav-item" type="button" onClick={checkAntivirus} disabled={checkingAntivirus}>
+          <button className="nav-item" type="button" onClick={runNetworkInspection} disabled={networkScanning}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              <path d="M5 12h14" />
+              <path d="M12 5v14" />
             </svg>
-            <span>Security Scan</span>
+            <span>Network Inspection</span>
           </button>
 
           <button className="nav-item" type="button" onClick={() => document.getElementById("security-results")?.scrollIntoView({ behavior: "smooth" })}>
@@ -1421,6 +1519,180 @@ function openCleanupReview() {
     deleted or modified any files.
   </p>
 </section>
+
+<section className="checks-panel" id="network-auditor">
+
+  <div className="panel-heading">
+    <div>
+      <h2>Network Auditor</h2>
+      <p>Inspect your device's network adapters and configurations.</p>
+    </div>
+
+    <button
+      onClick={runNetworkInspection}
+      disabled={networkScanning}
+    >
+      {networkScanning ? "Inspecting..." : "Inspect Network"}
+    </button>
+  </div>
+
+  {networkError && (
+    <div className="notice error-notice" role="alert">
+      <strong>Network inspection failed</strong>
+      <p>{networkError}</p>
+    </div>
+  )}
+
+  {networkReport?.success && (
+    <div className="firewall-results">
+
+      <h3>Detected Network Adapters</h3>
+
+      {networkReport.adapters.length > 0 ? (
+        networkReport.adapters.map((adapter, index) => (
+          <article className="detail-row" key={`${adapter.name}-${index}`}>
+            <div className="check-info">
+
+              <strong>{adapter.name || "Unnamed adapter"}</strong>
+
+              <p>
+                Description: {adapter.description || "Not available"}
+              </p>
+
+              <p>
+                Status: {adapter.status || "Unknown"}
+              </p>
+
+              <p>
+                IPv4 Addresses:{" "}
+                {adapter.ipv4_addresses.length > 0
+                  ? adapter.ipv4_addresses.join(", ")
+                  : "Not assigned"}
+              </p>
+
+              <p>
+                MAC Address: {adapter.mac_address || "Not available"}
+              </p>
+
+              <p>
+                Interface Type: {adapter.interface_type || "Unknown"}
+              </p>
+
+              <p>
+                Default Gateway:{" "}
+                {adapter.default_gateways.length > 0
+                  ? adapter.default_gateways.join(", ")
+                  : "Not available"}
+              </p>
+
+            </div>
+
+            <span
+              className={`check-status ${
+                adapter.status.toLowerCase() === "up"
+                  ? "success"
+                  : "warning"
+              }`}
+            >
+              <span className="small-dot" />
+              {adapter.status || "Unknown"}
+            </span>
+
+          </article>
+        ))
+      ) : (
+        <p>No network adapters were detected.</p>
+      )}
+
+      <p className="result-detail-note">
+        Network information was retrieved in read-only mode.
+        No network settings were modified.
+      </p>
+
+    </div>
+  )}
+
+  {/* Active Network Connections */}
+
+  <div className="panel-heading">
+    <div>
+      <h3>Active Network Connections</h3>
+      <p>Inspect active TCP connections and their associated processes.</p>
+    </div>
+
+    <button
+      onClick={runConnectionsInspection}
+      disabled={connectionsScanning}
+    >
+      {connectionsScanning ? "Inspecting..." : "Inspect Connections"}
+    </button>
+  </div>
+
+  {connectionsError && (
+    <div className="notice error-notice" role="alert">
+      <strong>Connection inspection failed</strong>
+      <p>{connectionsError}</p>
+    </div>
+  )}
+
+  {connectionsReport?.success && (
+    <div className="firewall-results">
+
+      <h3>
+        Detected TCP Connections ({connectionsReport.connections.length})
+      </h3>
+
+      {connectionsReport.connections.length > 0 ? (
+        connectionsReport.connections.map((connection, index) => (
+          <article
+            className="detail-row"
+            key={`${connection.local_address}-${connection.local_port}-${index}`}
+          >
+            <div className="check-info">
+
+              <strong>
+                {connection.process_name || "Unknown Process"}
+              </strong>
+
+              <p>
+                Process ID: {connection.owning_process_id}
+              </p>
+
+              <p>
+                Local Address: {connection.local_address}:{connection.local_port}
+              </p>
+
+              <p>
+                Remote Address: {connection.remote_address}:{connection.remote_port}
+              </p>
+
+              <p>
+                Connection State: {connection.state}
+              </p>
+
+            </div>
+
+            <span className="check-status">
+              <span className="small-dot" />
+              {connection.state}
+            </span>
+
+          </article>
+        ))
+      ) : (
+        <p>No TCP connections were detected.</p>
+      )}
+
+      <p className="result-detail-note">
+        Connection information was retrieved in read-only mode.
+        No connections or processes were modified.
+      </p>
+
+    </div>
+  )}
+
+</section>
+
 
 <section className="checks-panel" id="security-results">
 
